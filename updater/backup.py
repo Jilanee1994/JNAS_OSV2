@@ -1,6 +1,6 @@
 # ==========================================================
 # updater/backup.py
-# COMPLETE FILE
+# V2 - PART 1/3
 # ==========================================================
 
 import shutil
@@ -10,10 +10,11 @@ from pathlib import Path
 
 class BackupManager:
 
-    def __init__(self):
+    def __init__(self, project_root):
 
-        self.root = Path.cwd()
-        self.backup_root = self.root / "backups"
+        self.project_root = Path(project_root)
+
+        self.backup_root = self.project_root / "backups"
 
         self.backup_root.mkdir(
             parents=True,
@@ -26,21 +27,22 @@ class BackupManager:
             "%Y%m%d_%H%M%S"
         )
 
-        backup_dir = self.backup_root / timestamp
+        backup_folder = self.backup_root / timestamp
 
-        backup_dir.mkdir(
+        backup_folder.mkdir(
             parents=True,
             exist_ok=True
         )
 
         for file in files:
 
-            source = self.root / file.path
+            source = self.project_root / file.path
 
             if not source.exists():
+
                 continue
 
-            destination = backup_dir / file.path
+            destination = backup_folder / file.path
 
             destination.parent.mkdir(
                 parents=True,
@@ -52,23 +54,35 @@ class BackupManager:
                 destination
             )
 
+        return backup_folder
+
+
+# ==========================================================
+# updater/backup.py
+# V2 - PART 2/3
+# ==========================================================
+
     def restore(self, backup_folder):
 
         backup_folder = Path(backup_folder)
 
         if not backup_folder.exists():
+
             return False
 
         for item in backup_folder.rglob("*"):
 
             if item.is_dir():
+
                 continue
 
             relative = item.relative_to(
                 backup_folder
             )
 
-            destination = self.root / relative
+            destination = (
+                self.project_root / relative
+            )
 
             destination.parent.mkdir(
                 parents=True,
@@ -86,11 +100,16 @@ class BackupManager:
 
         backups = []
 
+        if not self.backup_root.exists():
+
+            return backups
+
         for folder in sorted(
             self.backup_root.iterdir()
         ):
 
             if folder.is_dir():
+
                 backups.append(folder)
 
         return backups
@@ -99,10 +118,48 @@ class BackupManager:
 
         backups = self.list_backups()
 
-        if not backups:
+        if len(backups) == 0:
+
             return None
 
         return backups[-1]
+
+
+# ==========================================================
+# updater/backup.py
+# V2 - PART 3/3 (FINAL)
+# ==========================================================
+
+    def delete_backup(self, backup_folder):
+
+        backup_folder = Path(backup_folder)
+
+        if backup_folder.exists():
+
+            shutil.rmtree(backup_folder)
+
+            return True
+
+        return False
+
+    def backup_exists(self, backup_folder):
+
+        return Path(backup_folder).exists()
+
+    def backup_count(self):
+
+        return len(self.list_backups())
+
+    def clear_all(self):
+
+        if self.backup_root.exists():
+
+            shutil.rmtree(self.backup_root)
+
+        self.backup_root.mkdir(
+            parents=True,
+            exist_ok=True
+        )
 
 
 # ==========================================================

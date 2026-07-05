@@ -1,15 +1,12 @@
 # ==========================================================
 # updater/validator.py
-# COMPLETE FILE
+# V2 - PART 1/2
 # ==========================================================
 
 from pathlib import Path
 
 
 class Validator:
-
-    def __init__(self):
-        pass
 
     def validate_release(self, release):
 
@@ -27,61 +24,81 @@ class Validator:
 
         return True
 
-    def validate_file(self, release_file):
+    def validate_file(self, file):
 
-        if release_file is None:
+        if file is None:
             return False
 
-        if not release_file.path.strip():
+        if not file.path:
             return False
 
         return True
 
     def validate_path(self, path):
 
-        if not path:
-            return False
-
         path = Path(path)
 
-        forbidden = [
+        blocked = [
             ".git",
             "__pycache__",
             ".venv",
-            "venv"
+            "venv",
+            ".idea"
         ]
 
-        for item in forbidden:
+        for part in path.parts:
 
-            if item in path.parts:
+            if part in blocked:
+
                 return False
 
         return True
 
     def validate_content(self, content):
 
-        if content is None:
-            return False
+        return content is not None
 
-        return True
+
+
+
+# ==========================================================
+# updater/validator.py
+# V2 - PART 2/2 (FINAL)
+# ==========================================================
 
     def validate_all(self, release):
 
         if not self.validate_release(release):
+
             return False
 
         for file in release.files:
 
             if not self.validate_file(file):
+
                 return False
 
             if not self.validate_path(file.path):
+
                 return False
 
             if not self.validate_content(file.content):
+
                 return False
 
         return True
+
+    def file_exists(self, filename):
+
+        return Path(filename).exists()
+
+    def directory_exists(self, directory):
+
+        return Path(directory).is_dir()
+
+    def __repr__(self):
+
+        return "<Validator V2>"
 
 
 # ==========================================================

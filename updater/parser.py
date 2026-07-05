@@ -1,117 +1,198 @@
 # ==========================================================
 # updater/parser.py
-# COMPLETE FILE (1/3)
+# V2 - PART 1/4
 # ==========================================================
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
 @dataclass
 class ReleaseFile:
+
     path: str
+
     content: str
 
 
 @dataclass
 class Release:
-    version: str = ""
-    project: str = ""
-    author: str = ""
-    files: list = None
 
-    def __post_init__(self):
-        if self.files is None:
-            self.files = []
+    version: str = ""
+
+    project: str = ""
+
+    author: str = ""
+
+    files: list = field(default_factory=list)
 
 
 class ReleaseParser:
 
-    def __init__(self, release_file):
+    def parse(self, filename):
 
-        self.release_file = Path(release_file)
+        filename = Path(filename)
 
-    def parse(self):
+        if not filename.exists():
 
-        if not self.release_file.exists():
             return None
-
-        lines = self.release_file.read_text(
-            encoding="utf-8"
-        ).splitlines()
 
         release = Release()
 
         current_file = None
+
         buffer = []
-        inside_file = False
+
+        with open(
+            filename,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            lines = f.readlines()
 
         for line in lines:
 
+            line = line.rstrip("\n")
+
+            if not line:
+
+                continue
+
             if line.startswith("VERSION="):
-                release.version = line.split("=", 1)[1].strip()
+
+                release.version = line.split(
+                    "=",
+                    1
+                )[1].strip()
+
                 continue
 
             if line.startswith("PROJECT="):
-                release.project = line.split("=", 1)[1].strip()
+
+                release.project = line.split(
+                    "=",
+                    1
+                )[1].strip()
+
                 continue
 
             if line.startswith("AUTHOR="):
-                release.author = line.split("=", 1)[1].strip()
+
+                release.author = line.split(
+                    "=",
+                    1
+                )[1].strip()
+
                 continue
+
+# ==========================================================
+# updater/parser.py
+# V2 - PART 2/4
+# ==========================================================
 
             if line.startswith("FILE:"):
 
                 if current_file is not None:
 
                     release.files.append(
+
                         ReleaseFile(
-                            current_file,
-                            "\n".join(buffer)
+
+                            path=current_file,
+
+                            content="\n".join(buffer)
+
                         )
+
                     )
 
                 current_file = line.replace(
+
                     "FILE:",
+
                     ""
+
                 ).strip()
 
                 buffer = []
-                inside_file = True
+
                 continue
-# ==========================================================
-# updater/parser.py
-# PART 2 / 3
-# ==========================================================
 
-            if inside_file:
-
-                if line.startswith("========================================"):
-                    continue
+            if current_file is not None:
 
                 buffer.append(line)
 
         if current_file is not None:
 
             release.files.append(
+
                 ReleaseFile(
-                    current_file,
-                    "\n".join(buffer)
+
+                    path=current_file,
+
+                    content="\n".join(buffer)
+
                 )
+
             )
 
         return release
 
-    def print_summary(self, release):
+
+
+# ==========================================================
+# updater/parser.py
+# V2 - PART 3/4
+# ==========================================================
+
+    def get_file(self, release, filename):
+
+        for file in release.files:
+
+            if file.path == filename:
+
+                return file
+
+        return None
+
+    def has_file(self, release, filename):
+
+        return self.get_file(
+            release,
+            filename
+        ) is not None
+
+    def file_count(self, release):
+
+        return len(release.files)
+
+    def list_files(self, release):
+
+        return [
+
+            file.path
+
+            for file in release.files
+
+        ]
+
+    def summary(self, release):
 
         print("")
+
         print("=" * 60)
-        print("Release Summary")
+
+        print("RELEASE SUMMARY")
+
         print("=" * 60)
 
         print(f"Project : {release.project}")
+
         print(f"Version : {release.version}")
+
         print(f"Author  : {release.author}")
+
         print(f"Files   : {len(release.files)}")
 
         print("=" * 60)
@@ -122,32 +203,30 @@ class ReleaseParser:
 
         print("=" * 60)
 
-
 # ==========================================================
 # updater/parser.py
-# PART 3 / 3
+# V2 - PART 4/4 (FINAL)
 # ==========================================================
 
-    def get_file(self, release, filename):
+    def validate(self, release):
 
-        for file in release.files:
+        if release is None:
+            return False
 
-            if file.path == filename:
-                return file
+        if not release.project:
+            return False
 
-        return None
+        if not release.version:
+            return False
 
-    def has_file(self, release, filename):
+        if len(release.files) == 0:
+            return False
 
-        return self.get_file(release, filename) is not None
+        return True
 
-    def file_count(self, release):
+    def __repr__(self):
 
-        return len(release.files)
-
-    def list_files(self, release):
-
-        return [file.path for file in release.files]
+        return "<ReleaseParser V2>"
 
 
 # ==========================================================
