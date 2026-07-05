@@ -1,0 +1,44 @@
+.
+├── README.md
+├── Scraper-Engine
+│   ├── README.md
+│   ├── app.py
+│   ├── config
+│   │   ├── __pycache__
+│   │   │   └── config.cpython-312.pyc
+│   │   └── config.py
+│   ├── data
+│   ├── docs
+│   ├── logs
+│   │   └── scraper.log
+│   ├── outputs
+│   │   ├── output.csv
+│   │   └── output.json
+│   ├── requirements.txt
+│   ├── src
+│   │   ├── __pycache__
+│   │   │   ├── cleaner.cpython-312.pyc
+│   │   │   ├── downloader.cpython-312.pyc
+│   │   │   ├── logger.cpython-312.pyc
+│   │   │   └── parser.cpython-312.pyc
+│   │   ├── browser.py
+│   │   ├── cleaner.py
+│   │   ├── cookies.py
+│   │   ├── downloader.py
+│   │   ├── logger.py
+│   │   ├── parser.py
+│   │   ├── playwright_engine.py
+│   │   ├── screenshot.py
+│   │   └── waits.py
+│   └── tests
+├── backend
+│   ├── __init__.py
+│   └── main.py
+├── config
+│   └── settings.py
+├── frontend
+│   └── app.py
+├── project_tree.txt
+└── requirements.txt
+
+14 directories, 28 files
