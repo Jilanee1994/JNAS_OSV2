@@ -1,9 +1,15 @@
 import requests
 
-from config.settings import (
-    OLLAMA_HOST,
-    DEFAULT_MODEL
-)
+try:
+    from JNAS_AI_CORE.config.settings import (
+        OLLAMA_HOST,
+        DEFAULT_MODEL
+    )
+except ImportError:
+    from config.settings import (
+        OLLAMA_HOST,
+        DEFAULT_MODEL
+    )
 
 
 class OllamaClient:

@@ -7,11 +7,18 @@ import sys
 import hashlib
 from pathlib import Path
 
-from parser import ReleaseParser
-from writer import FileWriter
-from backup import BackupManager
-from validator import Validator
-from logger import Logger
+try:
+    from updater.parser import ReleaseParser
+    from updater.writer import FileWriter
+    from updater.backup import BackupManager
+    from updater.validator import Validator
+    from updater.logger import Logger
+except ImportError:
+    from parser import ReleaseParser
+    from writer import FileWriter
+    from backup import BackupManager
+    from validator import Validator
+    from logger import Logger
 
 
 class Updater:

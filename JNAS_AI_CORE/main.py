@@ -1,4 +1,7 @@
-from llm.manager import LLMManager
+try:
+    from JNAS_AI_CORE.llm.manager import LLMManager
+except ImportError:
+    from llm.manager import LLMManager
 
 
 def main():

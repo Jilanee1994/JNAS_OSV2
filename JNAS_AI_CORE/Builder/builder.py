@@ -53,11 +53,14 @@ def _try_import(module_path: str, class_name: str) -> Optional[type]:
         non-fatal -- the Builder Engine degrades gracefully and logs
         a warning so integrators know to wire the component manually.
     """
-    try:
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name)
-    except (ImportError, ModuleNotFoundError, AttributeError):
-        return None
+    candidates = (module_path, f"JNAS_AI_CORE.{module_path}")
+    for candidate in candidates:
+        try:
+            module = importlib.import_module(candidate)
+            return getattr(module, class_name)
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            continue
+    return None
 
 
 class BuilderEngine:
@@ -115,23 +118,23 @@ class BuilderEngine:
         self.logger = logger or get_logger(__name__)
         self.project_root = Path(project_root) if project_root else Path.cwd()
 
-        self.llm_manager = llm_manager or self._auto_wire("llm.llm_manager", "LLMManager")
+        self.llm_manager = llm_manager or self._auto_wire("llm.manager", "LLMManager")
         self.file_tool = file_tool or self._auto_wire("tools.file_tool", "FileTool")
         self.project_reader = project_reader or self._auto_wire(
-            "agent.project_reader", "ProjectReader"
+            "tools.project_reader", "ProjectReader"
         )
         self.project_scanner = project_scanner or self._auto_wire(
-            "agent.project_scanner", "ProjectScanner"
+            "tools.project_scanner", "ProjectScanner"
         )
         self.context_builder = context_builder or self._auto_wire(
-            "agent.context_builder", "ContextBuilder"
+            "llm.context_builder", "ContextBuilder"
         )
         self.code_agent = code_agent or self._auto_wire("agent.code_agent", "CodeAgent")
 
         if self.llm_manager is None:
             raise RuntimeError(
                 "BuilderEngine requires an LLMManager instance. None was "
-                "provided and auto-import from 'llm.llm_manager.LLMManager' "
+                "provided and auto-import from 'llm.manager.LLMManager' "
                 "failed. Pass one explicitly: BuilderEngine(llm_manager=...)."
             )
 

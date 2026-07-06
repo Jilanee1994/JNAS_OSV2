@@ -1,4 +1,7 @@
-from tools.project_reader import ProjectReader
+try:
+    from JNAS_AI_CORE.tools.project_reader import ProjectReader
+except ImportError:
+    from tools.project_reader import ProjectReader
 
 
 class ContextBuilder:

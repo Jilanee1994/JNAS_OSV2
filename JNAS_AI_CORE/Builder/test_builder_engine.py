@@ -14,11 +14,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from builder.builder import BuilderEngine
-from builder.generator import CodeGenerator
-from builder.reporter import BuildReport, BuildReporter
-from builder.tester import TestOutcome, TestRunner
-from builder.utils import (
+from JNAS_AI_CORE.Builder.builder import BuilderEngine
+from JNAS_AI_CORE.Builder.generator import CodeGenerator
+from JNAS_AI_CORE.Builder.reporter import BuildReport, BuildReporter
+from JNAS_AI_CORE.Builder.tester import TestOutcome, TestRunner
+from JNAS_AI_CORE.Builder.utils import (
     PytestResult,
     call_flexible,
     strip_markdown_fences,
@@ -130,7 +130,10 @@ class TestTestRunner:
             stderr="",
             target="dummy",
         )
-        monkeypatch.setattr("builder.tester.run_pytest", lambda target: fake_result)
+        monkeypatch.setattr(
+            "JNAS_AI_CORE.Builder.tester.run_pytest",
+            lambda target: fake_result,
+        )
 
         runner = TestRunner()
         outcome = runner.run("planner", Path("dummy"))
@@ -151,7 +154,10 @@ class TestTestRunner:
             stderr="",
             target="dummy",
         )
-        monkeypatch.setattr("builder.tester.run_pytest", lambda target: fake_result)
+        monkeypatch.setattr(
+            "JNAS_AI_CORE.Builder.tester.run_pytest",
+            lambda target: fake_result,
+        )
 
         runner = TestRunner()
         outcome = runner.run("planner", Path("dummy"))

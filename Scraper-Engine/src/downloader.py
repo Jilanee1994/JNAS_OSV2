@@ -1,8 +1,22 @@
 # src/downloader.py
 
+import importlib.util
+from pathlib import Path
+
 import requests
 
-from config.config import HEADERS, TIMEOUT
+try:
+    from config.config import HEADERS, TIMEOUT
+except ModuleNotFoundError:
+    config_path = Path(__file__).resolve().parents[1] / "config" / "config.py"
+    spec = importlib.util.spec_from_file_location("scraper_engine_config", config_path)
+    if spec is None or spec.loader is None:
+        raise
+    config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config)
+    HEADERS = config.HEADERS
+    TIMEOUT = config.TIMEOUT
+
 from src.logger import logger
 
 
@@ -30,4 +44,3 @@ def download_page(url):
         logger.error(f"Download failed: {e}")
 
         return None
-

@@ -1,4 +1,7 @@
-from llm.ollama_client import OllamaClient
+try:
+    from JNAS_AI_CORE.llm.ollama_client import OllamaClient
+except ImportError:
+    from llm.ollama_client import OllamaClient
 
 
 class LLMManager:
