@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .interfaces import BaseWorker, WorkerResult
+from .registry_adapter import RegistryAdapter
 from .request import UserRequest
 from .response import ExecutionResponse
 from .router import RoutedTask, TaskRouter
@@ -32,6 +33,7 @@ class AIOrchestrator:
         builder_engine: Any | None = None,
         router: TaskRouter | None = None,
         workers: dict[str, BaseWorker] | None = None,
+        registry_adapter: RegistryAdapter | None = None,
         project_root: Path | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -40,6 +42,7 @@ class AIOrchestrator:
         self.builder_engine = builder_engine
         self.router = router or TaskRouter()
         self.workers: dict[str, BaseWorker] = dict(workers or {})
+        self.registry_adapter = registry_adapter
         self.project_root = Path(project_root) if project_root else Path.cwd()
         self.logger = logger or logging.getLogger(__name__)
         self.initialized = False
@@ -118,7 +121,7 @@ class AIOrchestrator:
         task: RoutedTask,
         started: float,
     ) -> ExecutionResponse:
-        worker = self.workers.get(task.task_type)
+        worker = self._resolve_worker(task.task_type)
         if worker is None:
             return self._response(
                 success=False,
@@ -135,6 +138,13 @@ class AIOrchestrator:
             result=result.result,
             errors=result.errors,
         )
+
+    def _resolve_worker(self, task_type: str) -> BaseWorker | None:
+        if self.registry_adapter is not None:
+            worker = self.registry_adapter.resolve_worker(task_type)
+            if worker is not None:
+                return worker
+        return self.workers.get(task_type)
 
     def _register_default_workers(self) -> None:
         if TaskRouter.CODE_GENERATION not in self.workers:
