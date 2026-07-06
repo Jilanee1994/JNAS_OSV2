@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from JNAS_AI_CORE.session import SessionManager, SessionPersistence, SessionStatus
+from datetime import timedelta
+
+from JNAS_AI_CORE.session import SessionManager, SessionPersistence, SessionSchemaError, SessionStatus
+from JNAS_AI_CORE.session.models import utc_now
 
 
 def make_manager(tmp_path):
-    return SessionManager(persistence=SessionPersistence(tmp_path))
+    return SessionManager(
+        persistence=SessionPersistence(tmp_path),
+        config={"session": {"heartbeat_interval": 60, "retention_days": 1}},
+    )
 
 
 def test_create_and_resume_session(tmp_path) -> None:
@@ -68,3 +74,56 @@ def test_warnings_errors_self_healing(tmp_path) -> None:
     assert updated.self_healing_attempts == 1
     assert updated.warnings == ["slow"]
     assert updated.errors == ["failed"]
+
+
+def test_completed_sessions_are_archived_by_cleanup(tmp_path) -> None:
+    manager = make_manager(tmp_path)
+    session = manager.create_session("Project", "Worker", ["A"])
+    manager.update_progress(session.session_id, "A", ["A"], [])
+
+    result = manager.cleanup_sessions()
+    archived = manager.persistence.load(session.session_id)
+
+    assert session.session_id in result["archived"]
+    assert archived.status == SessionStatus.ARCHIVED
+
+
+def test_old_inactive_sessions_are_deleted_by_cleanup(tmp_path) -> None:
+    manager = make_manager(tmp_path)
+    session = manager.create_session("Project", "Worker")
+    manager.stop_session(session.session_id)
+    stopped = manager.persistence.load(session.session_id)
+    stopped.last_update = utc_now() - timedelta(days=5)
+    manager.persistence.save(stopped)
+
+    result = manager.cleanup_sessions(retention_days=1)
+
+    assert session.session_id in result["deleted"]
+    assert not manager.persistence.path_for(session.session_id).exists()
+
+
+def test_resume_interrupted_session_uses_last_checkpoint(tmp_path) -> None:
+    manager = make_manager(tmp_path)
+    session = manager.create_session("Project", "Worker")
+    manager.update_progress(session.session_id, "Initial", [], ["Initial"])
+    manager.add_checkpoint(session.session_id, "last-known", {"current_task": "Recovered Task"})
+    manager.stop_session(session.session_id)
+
+    resumed = manager.resume_interrupted_session()
+
+    assert resumed is not None
+    assert resumed.status == SessionStatus.RUNNING
+    assert resumed.current_task == "Recovered Task"
+
+
+def test_invalid_session_json_fails_schema_validation(tmp_path) -> None:
+    manager = make_manager(tmp_path)
+    path = manager.persistence.path_for("bad-session")
+    path.write_text('{"session_id": "bad-session"}', encoding="utf-8")
+
+    try:
+        manager.persistence.load("bad-session")
+    except SessionSchemaError:
+        assert True
+    else:
+        assert False, "Expected invalid session JSON to raise SessionSchemaError."
