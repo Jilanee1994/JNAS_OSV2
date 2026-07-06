@@ -1,7 +1,7 @@
 """Session Manager package."""
 
 from .checkpoint import Checkpoint
-from .exceptions import SessionError, SessionNotFound, SessionValidationError
+from .exceptions import SessionError, SessionLockError, SessionNotFound, SessionSchemaError, SessionValidationError
 from .heartbeat import Heartbeat
 from .persistence import SessionPersistence
 from .progress import Progress
@@ -16,9 +16,11 @@ __all__ = [
     "Progress",
     "Session",
     "SessionError",
+    "SessionLockError",
     "SessionManager",
     "SessionNotFound",
     "SessionPersistence",
+    "SessionSchemaError",
     "SessionStatus",
     "SessionValidationError",
     "SessionValidator",

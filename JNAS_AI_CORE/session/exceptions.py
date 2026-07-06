@@ -13,3 +13,11 @@ class SessionNotFound(SessionError):
 
 class SessionValidationError(SessionError):
     """Raised when session data is invalid."""
+
+
+class SessionLockError(SessionError):
+    """Raised when a session lock cannot be acquired."""
+
+
+class SessionSchemaError(SessionValidationError):
+    """Raised when persisted session JSON does not match the expected schema."""

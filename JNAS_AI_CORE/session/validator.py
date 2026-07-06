@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from .exceptions import SessionValidationError
+from typing import Any
+
+from .exceptions import SessionSchemaError, SessionValidationError
 from .session import Session
 
 
@@ -19,4 +21,32 @@ class SessionValidator:
             raise SessionValidationError("worker_name is required.")
         if not 0 <= session.progress.percent <= 100:
             raise SessionValidationError("progress percent must be between 0 and 100.")
+        return True
+
+    def validate_json(self, data: dict[str, Any]) -> bool:
+        """Validate persisted session JSON before it is deserialized."""
+        required = {
+            "session_id": str,
+            "project_name": str,
+            "worker_name": str,
+            "status": str,
+            "progress": dict,
+            "start_time": str,
+            "last_update": str,
+            "completed_tasks": list,
+            "remaining_tasks": list,
+            "warnings": list,
+            "errors": list,
+            "self_healing_attempts": int,
+            "memory_usage": dict,
+            "execution_time": (int, float),
+            "checkpoints": list,
+            "timeline": list,
+            "metadata": dict,
+        }
+        for field_name, expected_type in required.items():
+            if field_name not in data:
+                raise SessionSchemaError(f"Missing session field: {field_name}")
+            if not isinstance(data[field_name], expected_type):
+                raise SessionSchemaError(f"Invalid type for session field: {field_name}")
         return True
