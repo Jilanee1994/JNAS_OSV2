@@ -15,18 +15,31 @@ Public API:
 
 from __future__ import annotations
 
+from .builder_agent import BuilderAgent, BuilderAgentReport
 from .builder import BuilderEngine, main
+from .file_writer import BuilderFileWriter
 from .generator import CodeGenerator
+from .project_spec import ProjectFile, ProjectSpec
+from .prompt_manager import BuilderPromptManager
 from .reporter import BuildReport, BuildReporter
 from .tester import TestOutcome, TestRunner
+from .validator import BuildValidator, ValidationResult
 
 __all__ = [
+    "BuilderAgent",
+    "BuilderAgentReport",
     "BuilderEngine",
+    "BuilderFileWriter",
+    "BuilderPromptManager",
     "CodeGenerator",
+    "ProjectFile",
+    "ProjectSpec",
+    "BuildValidator",
     "TestRunner",
     "TestOutcome",
     "BuildReporter",
     "BuildReport",
+    "ValidationResult",
     "main",
 ]
 
