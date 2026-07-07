@@ -1,9 +1,13 @@
 venv/
 .env
 __pycache__/
+<<<<<<< HEAD
 **/__pycache__/
 *.pyc
 **/*.pyc
+=======
+*.pyc
+>>>>>>> d3aaca4f603cf5fe37898156986c9973ca77d20c
 node_modules/
 dist/
 build/

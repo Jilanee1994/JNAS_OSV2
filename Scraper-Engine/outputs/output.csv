@@ -1,6 +1,15 @@
+<<<<<<< HEAD
 Field,Value
 title,Example Domain
 headings,Example Domain
 paragraphs,This domain is for use in documentation examples without needing permission. Avoid use in operations. | Learn more
 links,https://iana.org/domains/example
 images,
+=======
+Field,Value
+title,Example Domain
+headings,Example Domain
+paragraphs,This domain is for use in documentation examples without needing permission. Avoid use in operations. | Learn more
+links,https://iana.org/domains/example
+images,
+>>>>>>> d3aaca4f603cf5fe37898156986c9973ca77d20c
