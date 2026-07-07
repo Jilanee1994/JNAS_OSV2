@@ -22,7 +22,10 @@ python build_project.py \
 - Added automatic folder creation and safe file writes.
 - Added compile validation.
 - Added pytest validation.
-- Added one automatic repair cycle on validation failure.
+- Added repeated repair cycles until success or retry limit.
+- Added preflight project validation for required files, Python quality, duplicate filenames, syntax, and placeholder markers.
+- Added runtime validation using `python -m src.main --help`.
+- Added deterministic recovery templates for HELLO and JOB_HUNTER when LLM output is invalid or unavailable.
 - Added V4 `BUILD_REPORT.md` generation.
 - Added exit code `0` on success and non-zero on failure.
 
@@ -35,8 +38,27 @@ PASS
 
 ```text
 python -m pytest
-153 passed in 23.36s
+159 passed in 37.68s
 ```
+
+## Acceptance Validation
+
+```text
+python build_project.py --project HELLO --output applications --provider ollama --milestone 1
+SUCCESS
+```
+
+```text
+python build_project.py --project JOB_HUNTER --output applications --provider ollama --milestone 1
+SUCCESS
+```
+
+Repeated JOB_HUNTER build validation:
+
+- No nested `applications/` folder.
+- No nested `path/` folder.
+- Exactly one `src/main.py`.
+- Generated project pytest passed.
 
 ## Backward Compatibility
 

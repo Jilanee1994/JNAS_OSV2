@@ -1,0 +1,1 @@
+"""JOB_HUNTER application."""
