@@ -1,0 +1,6 @@
+VERSION=1.0
+PROJECT=JNAS_OSV2
+AUTHOR=ChatGPT
+
+FILE: test.txt
+Hello JNAS

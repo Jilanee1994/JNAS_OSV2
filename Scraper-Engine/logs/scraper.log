@@ -1,0 +1,13 @@
+2026-07-05 16:49:31,780 | INFO | Logger is working!
+2026-07-05 16:51:14,213 | INFO | Downloading: https://example.com
+2026-07-05 16:51:14,261 | INFO | Download successful
+2026-07-05 16:51:14,263 | INFO | HTML parsed successfully
+2026-07-05 16:52:25,803 | INFO | Downloading: https://example.com
+2026-07-05 16:52:25,852 | INFO | Download successful
+2026-07-05 16:52:25,854 | INFO | HTML parsed successfully
+2026-07-05 16:52:25,854 | INFO | Data cleaned successfully
+2026-07-05 16:53:40,196 | INFO | Downloading: https://example.com
+2026-07-05 16:53:40,242 | INFO | Download successful
+2026-07-05 16:53:40,244 | INFO | HTML parsed successfully
+2026-07-05 16:53:40,244 | INFO | Data cleaned successfully
+2026-07-05 16:53:40,244 | INFO | Scraping completed successfully!

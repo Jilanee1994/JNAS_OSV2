@@ -1,0 +1,12 @@
+VERSION=2.0
+PROJECT=JNAS_OSV2
+AUTHOR=ChatGPT
+
+FILE: demo/file1.txt
+Hello File 1
+
+FILE: demo/file2.txt
+Hello File 2
+
+FILE: demo/file3.txt
+Hello File 3
