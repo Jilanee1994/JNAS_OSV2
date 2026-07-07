@@ -101,7 +101,15 @@ class DirectOllamaClient:
 
     def generate(self, prompt: str) -> str:
         """Call Ollama /api/generate without interactive shell usage."""
-        payload = json.dumps({"model": self.model, "prompt": prompt, "stream": False}).encode("utf-8")
+        self._write_debug("logs/ollama_prompt.txt", prompt)
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"num_predict": -1},
+            }
+        ).encode("utf-8")
         req = request.Request(
             f"{self.host}/api/generate",
             data=payload,
@@ -109,27 +117,50 @@ class DirectOllamaClient:
         )
         with request.urlopen(req, timeout=self.timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
+        content = self._extract_content(body)
+        self._write_debug("logs/ollama_response.txt", content)
+        return content
+
+    def _extract_content(self, body: dict[str, object]) -> str:
+        message = body.get("message")
+        if isinstance(message, dict) and "content" in message:
+            return str(message["content"])
         return str(body.get("response", ""))
+
+    def _write_debug(self, path: str, content: str) -> None:
+        write_text_file(Path(path), content)
 
 
 class FileResponseParser:
     """Parse filename-marked LLM responses into files."""
 
-    _FILE_PATTERN = re.compile(
-        r"===FILE:(?P<path>.*?)===\s*(?P<content>.*?)\s*===END===",
-        re.DOTALL,
-    )
+    _HEADER_PATTERN = re.compile(r"^\s*===FILE:(?P<path>[^=\r\n]+)===\s*$", re.MULTILINE)
+    _END_PATTERN = re.compile(r"^\s*===END===\s*$", re.MULTILINE)
 
     def parse(self, response: str) -> list[GeneratedFile]:
         """Parse generated files from a marker-based response."""
-        files = []
-        for match in self._FILE_PATTERN.finditer(response):
-            raw_path = match.group("path").strip()
-            content = strip_markdown_fences(match.group("content")).rstrip() + "\n"
-            if raw_path:
-                files.append(GeneratedFile(Path(raw_path), content))
-        if not files:
-            raise ValueError("LLM response did not contain any ===FILE:path=== blocks.")
+        raw = response.strip()
+        write_text_file(Path("logs") / "ollama_response.txt", response)
+        end_match = self._END_PATTERN.search(raw)
+        if end_match is None:
+            raise ValueError("Parser error: missing terminal ===END=== marker.")
+        content_region = raw[: end_match.start()].strip()
+        trailing = raw[end_match.end() :].strip()
+        if trailing:
+            raise ValueError("Parser error: response contains text after ===END===.")
+        headers = list(self._HEADER_PATTERN.finditer(content_region))
+        if not headers:
+            if "===FILE" in content_region:
+                raise ValueError("Parser error: malformed FILE header. Expected ===FILE:path===.")
+            raise ValueError("Parser error: response did not contain any ===FILE:path=== blocks.")
+        files: list[GeneratedFile] = []
+        for index, header in enumerate(headers):
+            raw_path = header.group("path").strip()
+            if not raw_path:
+                raise ValueError("Parser error: FILE header path is empty.")
+            next_start = headers[index + 1].start() if index + 1 < len(headers) else len(content_region)
+            file_content = content_region[header.end() : next_start].strip("\r\n")
+            files.append(GeneratedFile(Path(raw_path), strip_markdown_fences(file_content).rstrip() + "\n"))
         return files
 
 
@@ -161,7 +192,8 @@ class BuilderV4:
         project_root.mkdir(parents=True, exist_ok=True)
         report = BuilderV4Report(project_name, project_root, provider, milestone)
         try:
-            files = self.parser.parse(self.llm_client.generate(self._build_prompt(project_name, milestone)))
+            response = self.llm_client.generate(self._build_prompt(project_name, milestone))
+            files = self._parse_with_retry(project_name, milestone, response, report)
             self._write_files(project_root, files, report)
             self._validate(project_root, report)
             if not report.success:
@@ -172,6 +204,23 @@ class BuilderV4:
         report.duration = time.perf_counter() - started
         write_text_file(project_root / "BUILD_REPORT.md", report.to_markdown())
         return report
+
+    def _parse_with_retry(
+        self,
+        project_name: str,
+        milestone: int,
+        response: str,
+        report: BuilderV4Report,
+    ) -> list[GeneratedFile]:
+        try:
+            return self.parser.parse(response)
+        except ValueError as exc:
+            write_text_file(Path("logs") / "ollama_response.txt", response)
+            self.logger.warning("Initial parse failed: %s", exc)
+            retry_prompt = self._parser_repair_prompt(project_name, milestone, response, str(exc))
+            retry_response = self.llm_client.generate(retry_prompt)
+            report.retry_result = "parser-retry"
+            return self.parser.parse(retry_response)
 
     def _build_prompt(self, project_name: str, milestone: int) -> str:
         return (
@@ -185,7 +234,7 @@ class BuilderV4:
             "Do NOT write any text before the first file.\n"
             "Do NOT write any text after the last file.\n"
             "\n"
-            "Return every file EXACTLY like this:\n"
+            "Return every file EXACTLY like this, with one final ===END=== only:\n"
             "\n"
             "===FILE:README.md===\n"
             "<content>\n"
@@ -206,11 +255,37 @@ class BuilderV4:
             "<markdown>\n"
             "\n"
             "===END===\n"
+            "The only valid tokens outside file content are ===FILE:path=== and the final ===END===.\n"
             "Include tests when appropriate.\n"
             "Do not output TODO, placeholder code, fake imports, pass-only implementations, or explanations.\n"
             "Generated tests must match generated implementation.\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n"
+        )
+
+    def _parser_repair_prompt(self, project_name: str, milestone: int, invalid_response: str, parser_error: str) -> str:
+        return (
+            "Your previous response was invalid and could not be parsed.\n"
+            "Output ONLY valid file blocks.\n"
+            "No markdown.\n"
+            "No explanations.\n"
+            "No prose.\n"
+            "No code fences.\n"
+            "Use this exact format with one final ===END=== only:\n\n"
+            "===FILE:README.md===\n"
+            "<content>\n\n"
+            "===FILE:requirements.txt===\n"
+            "<content>\n\n"
+            "===FILE:src/main.py===\n"
+            "<python code>\n\n"
+            "===FILE:tests/test_main.py===\n"
+            "<python test code>\n\n"
+            "===END===\n\n"
+            f"Project name: {project_name}\n"
+            f"Milestone: {milestone}\n"
+            f"Parser error: {parser_error}\n\n"
+            "Previous invalid response:\n"
+            f"{invalid_response}\n"
         )
 
     def _repair_prompt(self, project_name: str, milestone: int, report: BuilderV4Report) -> str:
@@ -224,8 +299,8 @@ class BuilderV4:
         )
         return (
             "Repair the generated project files.\n"
-            "Return only files that must be replaced using ===FILE:path=== blocks.\n"
-            "Use the same marker format and no explanations.\n\n"
+            "Return only files that must be replaced using ===FILE:path=== blocks and one final ===END===.\n"
+            "No markdown. No explanations. No prose. No code fences.\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n\n"
             "Validation errors:\n"

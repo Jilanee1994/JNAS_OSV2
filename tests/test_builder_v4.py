@@ -20,7 +20,7 @@ def valid_response() -> str:
     return """===FILE:hello.py===
 def greet() -> str:
     return "hello"
-===END===
+
 ===FILE:tests/test_hello.py===
 from hello import greet
 
@@ -35,7 +35,7 @@ def broken_response() -> str:
     return """===FILE:hello.py===
 def greet(:
     return "hello"
-===END===
+
 ===FILE:tests/test_hello.py===
 from hello import greet
 
@@ -54,10 +54,48 @@ def greet() -> str:
 """
 
 
+def conversational_response() -> str:
+    return "Sure, here is the project:\n\n```python\nprint('hi')\n```"
+
+
+def malformed_header_response() -> str:
+    return """===FILE hello.py===
+print("bad")
+===END===
+"""
+
+
 def test_file_response_parser_extracts_files() -> None:
     files = FileResponseParser().parse(valid_response())
     assert [item.path.as_posix() for item in files] == ["hello.py", "tests/test_hello.py"]
     assert "def greet" in files[0].content
+
+
+def test_file_response_parser_requires_end() -> None:
+    try:
+        FileResponseParser().parse("===FILE:hello.py===\nprint('x')\n")
+    except ValueError as exc:
+        assert "missing terminal ===END===" in str(exc)
+    else:
+        raise AssertionError("Expected missing END to fail.")
+
+
+def test_file_response_parser_rejects_conversation() -> None:
+    try:
+        FileResponseParser().parse(conversational_response())
+    except ValueError as exc:
+        assert "missing terminal ===END===" in str(exc)
+    else:
+        raise AssertionError("Expected conversational response to fail.")
+
+
+def test_file_response_parser_rejects_malformed_header() -> None:
+    try:
+        FileResponseParser().parse(malformed_header_response())
+    except ValueError as exc:
+        assert "malformed FILE header" in str(exc)
+    else:
+        raise AssertionError("Expected malformed header to fail.")
 
 
 def test_builder_v4_builds_project_and_report(tmp_path: Path) -> None:
@@ -78,6 +116,14 @@ def test_builder_v4_runs_one_repair_cycle(tmp_path: Path) -> None:
     assert report.retry_result == "success"
     assert len(llm.prompts) == 2
     assert "Validation errors" in llm.prompts[1]
+
+
+def test_builder_v4_retries_parser_failure(tmp_path: Path) -> None:
+    llm = FakeV4LLM([conversational_response(), valid_response()])
+    report = BuilderV4(llm).build("Hello", tmp_path, "ollama", 1)
+    assert report.success
+    assert report.retry_result == "parser-retry"
+    assert "Previous invalid response" in llm.prompts[1]
 
 
 def test_builder_v4_rejects_path_escape(tmp_path: Path) -> None:

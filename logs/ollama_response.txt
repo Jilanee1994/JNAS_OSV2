@@ -1,0 +1,11 @@
+===FILE:hello.py===
+def greet() -> str:
+    return "hello"
+
+===FILE:tests/test_hello.py===
+from hello import greet
+
+
+def test_greet() -> None:
+    assert greet() == "hello"
+===END===
