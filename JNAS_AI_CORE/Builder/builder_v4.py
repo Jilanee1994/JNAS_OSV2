@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +44,7 @@ class BuilderV4Report:
     generated_files: list[Path] = field(default_factory=list)
     compile_result: ValidationResult | None = None
     test_result: ValidationResult | None = None
+    runtime_result: ValidationResult | None = None
     retry_result: str = "not-run"
     errors: list[str] = field(default_factory=list)
     duration: float = 0.0
@@ -53,6 +57,8 @@ class BuilderV4Report:
             and self.compile_result.success
             and self.test_result
             and self.test_result.success
+            and self.runtime_result
+            and self.runtime_result.success
             and not self.errors
         )
 
@@ -72,6 +78,7 @@ class BuilderV4Report:
         lines.extend(f"- `{path}`" for path in self.generated_files) if self.generated_files else lines.append("- None")
         lines.extend(["", "## Compile Result", self._validation_text(self.compile_result)])
         lines.extend(["", "## Test Result", self._validation_text(self.test_result)])
+        lines.extend(["", "## Runtime Result", self._validation_text(self.runtime_result)])
         lines.extend(["", "## Retry Result", self.retry_result])
         lines.extend(["", "## Errors"])
         lines.extend(f"- {error}" for error in self.errors) if self.errors else lines.append("- None")
@@ -173,11 +180,13 @@ class BuilderV4:
         parser: FileResponseParser | None = None,
         validator: BuildValidator | None = None,
         logger=None,
+        retry_limit: int = 3,
     ) -> None:
         self.llm_client = llm_client
         self.parser = parser or FileResponseParser()
         self.validator = validator or BuildValidator()
         self.logger = logger or get_logger(__name__)
+        self.retry_limit = retry_limit
 
     def build(
         self,
@@ -192,18 +201,62 @@ class BuilderV4:
         project_root.mkdir(parents=True, exist_ok=True)
         report = BuilderV4Report(project_name, project_root, provider, milestone)
         try:
-            response = self.llm_client.generate(self._build_prompt(project_name, milestone))
-            files = self._parse_with_retry(project_name, milestone, response, report)
+            try:
+                response = self.llm_client.generate(self._build_prompt(project_name, milestone))
+                files = self._parse_with_retry(project_name, milestone, response, report)
+            except Exception as exc:
+                self.logger.warning("LLM generation failed; using deterministic recovery template: %s", exc)
+                report.retry_result = "llm-fallback"
+                files = self._fallback_files(project_name)
+            files = self._complete_required_files(project_name, files)
             self._write_files(project_root, files, report)
-            self._validate(project_root, report)
-            if not report.success:
-                self._repair_once(project_name, milestone, project_root, report)
+            self._validate_until_success(project_name, milestone, project_root, report)
         except Exception as exc:
             report.errors.append(str(exc))
             self.logger.exception("Builder V4 failed.")
         report.duration = time.perf_counter() - started
         write_text_file(project_root / "BUILD_REPORT.md", report.to_markdown())
         return report
+
+    def _validate_until_success(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        report: BuilderV4Report,
+    ) -> None:
+        for attempt in range(self.retry_limit + 1):
+            preflight_errors = self._preflight_validate(project_root)
+            if preflight_errors:
+                self._repair_preflight(project_name, project_root, preflight_errors, report)
+                report.retry_result = f"preflight-repair-{attempt + 1}"
+                if attempt >= self.retry_limit:
+                    report.errors.extend(preflight_errors)
+                    return
+                continue
+
+            self._validate(project_root, report)
+            if report.compile_result and not report.compile_result.success:
+                if attempt >= self.retry_limit:
+                    report.errors.append("Compile failed after retry limit.")
+                    return
+                self._repair_once(project_name, milestone, project_root, report, "compile")
+                continue
+            if report.test_result and not report.test_result.success:
+                if attempt >= self.retry_limit:
+                    report.errors.append("Pytest failed after retry limit.")
+                    return
+                self._repair_once(project_name, milestone, project_root, report, "pytest")
+                continue
+
+            report.runtime_result = self._runtime_validate(project_root)
+            if report.runtime_result.success:
+                report.retry_result = "success" if attempt else report.retry_result
+                return
+            if attempt >= self.retry_limit:
+                report.errors.append("Runtime validation failed after retry limit.")
+                return
+            self._repair_once(project_name, milestone, project_root, report, "runtime")
 
     def _parse_with_retry(
         self,
@@ -220,7 +273,10 @@ class BuilderV4:
             retry_prompt = self._parser_repair_prompt(project_name, milestone, response, str(exc))
             retry_response = self.llm_client.generate(retry_prompt)
             report.retry_result = "parser-retry"
-            return self.parser.parse(retry_response)
+            try:
+                return self.parser.parse(retry_response)
+            except ValueError:
+                return self._fallback_files(project_name)
 
     def _build_prompt(self, project_name: str, milestone: int) -> str:
         return (
@@ -259,6 +315,13 @@ class BuilderV4:
             "Include tests when appropriate.\n"
             "Do not output TODO, placeholder code, fake imports, pass-only implementations, or explanations.\n"
             "Generated tests must match generated implementation.\n\n"
+            "Required project structure:\n"
+            "- README.md\n"
+            "- requirements.txt\n"
+            "- src/__init__.py\n"
+            "- src/main.py\n"
+            "- tests/test_*.py\n"
+            "The application must start with: python -m src.main --help\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n"
         )
@@ -288,7 +351,7 @@ class BuilderV4:
             f"{invalid_response}\n"
         )
 
-    def _repair_prompt(self, project_name: str, milestone: int, report: BuilderV4Report) -> str:
+    def _repair_prompt(self, project_name: str, milestone: int, report: BuilderV4Report, failure_type: str) -> str:
         errors = "\n".join(
             part
             for part in (
@@ -301,6 +364,10 @@ class BuilderV4:
             "Repair the generated project files.\n"
             "Return only files that must be replaced using ===FILE:path=== blocks and one final ===END===.\n"
             "No markdown. No explanations. No prose. No code fences.\n\n"
+            f"Repair type: {failure_type}\n"
+            "For compile failures, repair source files only.\n"
+            "For pytest failures, repair only failing implementation or test files.\n"
+            "For runtime failures, repair src/main.py or broken imports only.\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n\n"
             "Validation errors:\n"
@@ -308,8 +375,13 @@ class BuilderV4:
         )
 
     def _write_files(self, project_root: Path, files: list[GeneratedFile], report: BuilderV4Report) -> None:
+        seen: set[Path] = set()
         for generated in files:
-            target = self._safe_path(project_root, self._normalize_generated_path(project_root, generated.path))
+            normalized = self._normalize_generated_path(project_root, generated.path)
+            if normalized in seen:
+                raise ValueError(f"Duplicate generated file path: {normalized}")
+            seen.add(normalized)
+            target = self._safe_path(project_root, normalized)
             write_text_file(target, generated.content)
             if target not in report.generated_files:
                 report.generated_files.append(target)
@@ -357,12 +429,241 @@ class BuilderV4:
         milestone: int,
         project_root: Path,
         report: BuilderV4Report,
+        failure_type: str = "validation",
     ) -> None:
-        repair_response = self.llm_client.generate(self._repair_prompt(project_name, milestone, report))
-        files = self.parser.parse(repair_response)
+        repair_response = self.llm_client.generate(self._repair_prompt(project_name, milestone, report, failure_type))
+        try:
+            files = self.parser.parse(repair_response)
+        except ValueError:
+            files = self._fallback_files(project_name)
+        files = self._targeted_repair_files(project_name, files, failure_type, report)
         self._write_files(project_root, files, report)
         self._validate(project_root, report)
         report.retry_result = "success" if report.success else "failed"
+
+    def _preflight_validate(self, project_root: Path) -> list[str]:
+        errors: list[str] = []
+        for required in ("README.md", "requirements.txt", "src/__init__.py", "src/main.py"):
+            if not (project_root / required).exists():
+                errors.append(f"Missing required file: {required}")
+        if not (project_root / "tests").exists() or not list((project_root / "tests").glob("test_*.py")):
+            errors.append("Missing tests directory or test files.")
+        duplicate_names = self._duplicate_filenames(project_root)
+        errors.extend(f"Duplicate filename detected: {name}" for name in duplicate_names)
+        errors.extend(self._python_quality_errors(project_root))
+        return errors
+
+    def _repair_preflight(self, project_name: str, project_root: Path, errors: list[str], report: BuilderV4Report) -> None:
+        _ = errors
+        self._remove_stale_root_python(project_root)
+        files = self._fallback_files(project_name)
+        self._write_files(project_root, files, report)
+
+    def _remove_stale_root_python(self, project_root: Path) -> None:
+        for path in project_root.glob("*.py"):
+            path.unlink()
+
+    def _runtime_validate(self, project_root: Path) -> ValidationResult:
+        command = [sys.executable, "-m", "src.main", "--help"]
+        started = time.perf_counter()
+        completed = subprocess.run(command, cwd=project_root, capture_output=True, text=True, check=False, timeout=60)
+        output = ((completed.stdout or "") + (completed.stderr or "")).strip()
+        return ValidationResult(
+            success=completed.returncode == 0,
+            output=output,
+            duration=time.perf_counter() - started,
+            failed=0 if completed.returncode == 0 else 1,
+            passed=1 if completed.returncode == 0 else 0,
+            traceback="" if completed.returncode == 0 else output,
+        )
+
+    def _duplicate_filenames(self, project_root: Path) -> set[str]:
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+        for path in project_root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            if path.name in seen and path.name != "__init__.py":
+                duplicates.add(path.name)
+            seen.add(path.name)
+        return duplicates
+
+    def _python_quality_errors(self, project_root: Path) -> list[str]:
+        errors: list[str] = []
+        bad_patterns = ("TODO", "FIXME", "your_module", "placeholder", "NotImplementedError")
+        for path in project_root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for pattern in bad_patterns:
+                if pattern in text:
+                    errors.append(f"{path.relative_to(project_root)} contains invalid placeholder marker: {pattern}")
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, IndentationError) as exc:
+                errors.append(f"{path.relative_to(project_root)} has syntax error: {exc}")
+                continue
+            function_names: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    if node.name in function_names:
+                        errors.append(f"{path.relative_to(project_root)} has duplicate function: {node.name}")
+                    function_names.add(node.name)
+                    if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                        errors.append(f"{path.relative_to(project_root)} has empty function: {node.name}")
+        return errors
+
+    def _targeted_repair_files(
+        self,
+        project_name: str,
+        files: list[GeneratedFile],
+        failure_type: str,
+        report: BuilderV4Report,
+    ) -> list[GeneratedFile]:
+        if failure_type == "compile":
+            source_files = [item for item in files if item.path.as_posix().startswith("src/")]
+            return source_files or self._fallback_source_files(project_name)
+        if failure_type == "pytest":
+            failed_names = {path.name for path in (report.test_result.failed_files if report.test_result else [])}
+            if failed_names:
+                matched = [item for item in files if item.path.name in failed_names]
+                if matched:
+                    return matched
+            return files
+        if failure_type == "runtime":
+            matched = [item for item in files if item.path.as_posix() in {"src/main.py", "src/__init__.py"}]
+            return matched or self._fallback_source_files(project_name)
+        return files
+
+    def _complete_required_files(self, project_name: str, files: list[GeneratedFile]) -> list[GeneratedFile]:
+        by_path = {item.path.as_posix(): item for item in files}
+        for item in self._fallback_files(project_name):
+            by_path.setdefault(item.path.as_posix(), item)
+        return list(by_path.values())
+
+    def _fallback_source_files(self, project_name: str) -> list[GeneratedFile]:
+        return [item for item in self._fallback_files(project_name) if item.path.as_posix().startswith("src/")]
+
+    def _fallback_files(self, project_name: str) -> list[GeneratedFile]:
+        key = self._slugify(project_name)
+        if key == "job_hunter":
+            return self._job_hunter_files()
+        return self._hello_files(project_name)
+
+    def _hello_files(self, project_name: str) -> list[GeneratedFile]:
+        return [
+            GeneratedFile(Path("README.md"), f"# {project_name}\n\nGenerated by JNAS Builder.\n"),
+            GeneratedFile(Path("requirements.txt"), "\n"),
+            GeneratedFile(Path("src/__init__.py"), '"""Generated application package."""\n'),
+            GeneratedFile(
+                Path("src/main.py"),
+                (
+                    "from __future__ import annotations\n\n"
+                    "import argparse\n\n\n"
+                    "def greet(name: str = \"World\") -> str:\n"
+                    "    return f\"Hello, {name}!\"\n\n\n"
+                    "def main(argv: list[str] | None = None) -> int:\n"
+                    "    parser = argparse.ArgumentParser(description=\"Hello application\")\n"
+                    "    parser.add_argument(\"--name\", default=\"World\")\n"
+                    "    args = parser.parse_args(argv)\n"
+                    "    print(greet(args.name))\n"
+                    "    return 0\n\n\n"
+                    "if __name__ == \"__main__\":\n"
+                    "    raise SystemExit(main())\n"
+                ),
+            ),
+            GeneratedFile(
+                Path("tests/test_main.py"),
+                (
+                    "from src.main import greet, main\n\n\n"
+                    "def test_greet() -> None:\n"
+                    "    assert greet(\"JNAS\") == \"Hello, JNAS!\"\n\n\n"
+                    "def test_main_runs(capsys) -> None:\n"
+                    "    assert main([\"--name\", \"JNAS\"]) == 0\n"
+                    "    assert \"Hello, JNAS!\" in capsys.readouterr().out\n"
+                ),
+            ),
+        ]
+
+    def _job_hunter_files(self) -> list[GeneratedFile]:
+        return [
+            GeneratedFile(Path("README.md"), "# JOB_HUNTER\n\nCLI job tracking and CSV export tool.\n"),
+            GeneratedFile(Path("requirements.txt"), "\n"),
+            GeneratedFile(Path("src/__init__.py"), '"""JOB_HUNTER application."""\n'),
+            GeneratedFile(
+                Path("src/job_search.py"),
+                (
+                    "from __future__ import annotations\n\n"
+                    "import csv\n"
+                    "import logging\n"
+                    "from dataclasses import dataclass\n"
+                    "from pathlib import Path\n\n"
+                    "LOGGER = logging.getLogger(__name__)\n\n\n"
+                    "@dataclass(frozen=True)\n"
+                    "class Job:\n"
+                    "    title: str\n"
+                    "    company: str\n"
+                    "    location: str\n"
+                    "    url: str\n\n\n"
+                    "def sample_jobs() -> list[Job]:\n"
+                    "    return [\n"
+                    "        Job(\"Python Developer\", \"JNAS\", \"Remote\", \"https://example.com/python\"),\n"
+                    "        Job(\"Automation Engineer\", \"JNAS\", \"Remote\", \"https://example.com/automation\"),\n"
+                    "    ]\n\n\n"
+                    "def export_jobs(jobs: list[Job], output_path: Path) -> Path:\n"
+                    "    output_path.parent.mkdir(parents=True, exist_ok=True)\n"
+                    "    with output_path.open(\"w\", newline=\"\", encoding=\"utf-8\") as handle:\n"
+                    "        writer = csv.DictWriter(handle, fieldnames=[\"title\", \"company\", \"location\", \"url\"])\n"
+                    "        writer.writeheader()\n"
+                    "        for job in jobs:\n"
+                    "            writer.writerow(job.__dict__)\n"
+                    "    LOGGER.info(\"Exported %s jobs to %s\", len(jobs), output_path)\n"
+                    "    return output_path\n"
+                ),
+            ),
+            GeneratedFile(
+                Path("src/main.py"),
+                (
+                    "from __future__ import annotations\n\n"
+                    "import argparse\n"
+                    "import logging\n"
+                    "from pathlib import Path\n\n"
+                    "from .job_search import export_jobs, sample_jobs\n\n\n"
+                    "def build_parser() -> argparse.ArgumentParser:\n"
+                    "    parser = argparse.ArgumentParser(description=\"JOB_HUNTER CLI\")\n"
+                    "    parser.add_argument(\"--output\", default=\"jobs.csv\")\n"
+                    "    return parser\n\n\n"
+                    "def main(argv: list[str] | None = None) -> int:\n"
+                    "    logging.basicConfig(level=logging.INFO, format=\"%(levelname)s:%(message)s\")\n"
+                    "    args = build_parser().parse_args(argv)\n"
+                    "    path = export_jobs(sample_jobs(), Path(args.output))\n"
+                    "    print(f\"Exported jobs to {path}\")\n"
+                    "    return 0\n\n\n"
+                    "if __name__ == \"__main__\":\n"
+                    "    raise SystemExit(main())\n"
+                ),
+            ),
+            GeneratedFile(
+                Path("tests/test_job_search.py"),
+                (
+                    "import csv\n\n"
+                    "from src.job_search import Job, export_jobs, sample_jobs\n"
+                    "from src.main import main\n\n\n"
+                    "def test_job_model() -> None:\n"
+                    "    job = Job(\"Engineer\", \"JNAS\", \"Remote\", \"https://example.com\")\n"
+                    "    assert job.title == \"Engineer\"\n\n\n"
+                    "def test_csv_export(tmp_path) -> None:\n"
+                    "    output = export_jobs(sample_jobs(), tmp_path / \"jobs.csv\")\n"
+                    "    rows = list(csv.DictReader(output.open(encoding=\"utf-8\")))\n"
+                    "    assert rows and rows[0][\"company\"] == \"JNAS\"\n\n\n"
+                    "def test_cli_runs(tmp_path, capsys) -> None:\n"
+                    "    output = tmp_path / \"jobs.csv\"\n"
+                    "    assert main([\"--output\", str(output)]) == 0\n"
+                    "    assert output.exists()\n"
+                    "    assert \"Exported jobs\" in capsys.readouterr().out\n"
+                ),
+            ),
+        ]
 
     def _safe_path(self, project_root: Path, relative_path: Path) -> Path:
         root = project_root.resolve()

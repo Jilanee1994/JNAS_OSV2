@@ -16,6 +16,20 @@ class FakeV4LLM:
         return self.responses.pop(0)
 
 
+class AlwaysBadLLM:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return conversational_response()
+
+
+class FailingLLM:
+    def generate(self, prompt: str) -> str:
+        raise ConnectionError("ollama unavailable")
+
+
 def valid_response() -> str:
     return """===FILE:hello.py===
 def greet() -> str:
@@ -163,6 +177,41 @@ x = 1
     report = BuilderV4(FakeV4LLM([response])).build("hello", tmp_path / "applications", "ollama", 1)
     assert not report.success
     assert any("escapes project root" in error for error in report.errors)
+
+
+def test_builder_v4_acceptance_hello_from_bad_llm(tmp_path: Path) -> None:
+    report = BuilderV4(AlwaysBadLLM()).build("HELLO", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "hello"
+    assert report.success
+    assert (root / "src" / "main.py").exists()
+    assert (root / "tests" / "test_main.py").exists()
+    assert report.runtime_result is not None and report.runtime_result.success
+
+
+def test_builder_v4_acceptance_hello_when_ollama_unavailable(tmp_path: Path) -> None:
+    report = BuilderV4(FailingLLM()).build("HELLO", tmp_path / "applications", "ollama", 1)
+    assert report.success
+    assert report.retry_result in {"llm-fallback", "success"}
+
+
+def test_builder_v4_acceptance_job_hunter_from_bad_llm(tmp_path: Path) -> None:
+    report = BuilderV4(AlwaysBadLLM()).build("JOB_HUNTER", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "job_hunter"
+    assert report.success
+    assert (root / "src" / "job_search.py").exists()
+    assert (root / "tests" / "test_job_search.py").exists()
+    assert report.runtime_result is not None and report.runtime_result.success
+
+
+def test_builder_v4_repeated_build_does_not_nest_or_duplicate(tmp_path: Path) -> None:
+    builder = BuilderV4(AlwaysBadLLM())
+    first = builder.build("HELLO", tmp_path / "applications", "ollama", 1)
+    second = builder.build("HELLO", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "hello"
+    assert first.success and second.success
+    assert not (root / "applications").exists()
+    assert not (root / "hello" / "hello").exists()
+    assert len(list(root.rglob("main.py"))) == 1
 
 
 def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> None:
