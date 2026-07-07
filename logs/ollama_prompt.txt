@@ -1,0 +1,32 @@
+Repair the generated project files.
+Return only files that must be replaced using ===FILE:path=== blocks and one final ===END===.
+No markdown. No explanations. No prose. No code fences.
+
+Project name: HELLO
+Milestone: 1
+
+Validation errors:
+Listing 'applications/hello'...
+Listing 'applications/hello/src'...
+Compiling 'applications/hello/src/job_search.py'...
+Compiling 'applications/hello/src/main.py'...
+Listing 'applications/hello/tests'...
+Compiling 'applications/hello/tests/test_job_search.py'...
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________________________________ test_get_jobs _________________________________
+
+    def test_get_jobs():
+        expected_jobs = [
+            {"title": "Software Engineer", "company": "Tech Corp", "location": "San Francisco"},
+            {"title": "Data Scientist", "company": "Analytics Inc.", "location": "New York"}
+        ]
+    
+>       with open("tests/mock_response.json") as f:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'tests/mock_response.json'
+
+tests/test_job_search.py:10: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_job_search.py::test_get_jobs - FileNotFoundError: [Errno 2]...
+1 failed in 0.12s
