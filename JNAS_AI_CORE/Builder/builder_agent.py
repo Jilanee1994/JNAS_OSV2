@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from .file_writer import BuilderFileWriter
+from .generation_validator import GenerationValidator
 from .llm_interface import BuilderLLMClient
 from .pipeline import BuilderExecutionPipeline
 from .project_spec import ProjectFile, ProjectSpec
 from .prompt_manager import BuilderPromptManager
 from .report_v2 import BuilderV2Report
+from .specification_validator import SpecificationValidator, SpecificationValidationResult
 from .utils import call_flexible, get_logger, write_text_file
 from .validator import BuildValidator, ValidationResult
 
@@ -36,6 +38,8 @@ class BuilderAgentReport:
     retries: int = 0
     compile_result: ValidationResult | None = None
     test_result: ValidationResult | None = None
+    specification_result: SpecificationValidationResult | None = None
+    generation_validation_errors: dict[str, list[str]] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     duration: float = 0.0
 
@@ -63,6 +67,19 @@ class BuilderAgentReport:
             "## Generated Files",
         ]
         lines.extend(f"- `{path}`" for path in self.generated_files) if self.generated_files else lines.append("- None")
+        lines.extend(["", "## Specification", ""])
+        if self.specification_result is None:
+            lines.append("- No explicit file specification enforced.")
+        else:
+            lines.append("PASS" if self.specification_result.success else "FAIL")
+            lines.extend(["", "```text", self.specification_result.to_message(), "```"])
+        lines.extend(["", "## Generation Validation", ""])
+        if self.generation_validation_errors:
+            for path, errors in self.generation_validation_errors.items():
+                lines.append(f"- `{path}`")
+                lines.extend(f"  - {error}" for error in errors)
+        else:
+            lines.append("- PASS")
         lines.extend(["", "## Compile Result", ""])
         lines.append("PASS" if self.compile_result and self.compile_result.success else "FAIL")
         if self.compile_result and self.compile_result.output:
@@ -88,6 +105,8 @@ class BuilderAgent:
         file_writer: BuilderFileWriter | None = None,
         prompt_manager: BuilderPromptManager | None = None,
         validator: BuildValidator | None = None,
+        specification_validator: SpecificationValidator | None = None,
+        generation_validator: GenerationValidator | None = None,
         llm_client: BuilderLLMClient | None = None,
         planner: Any | None = None,
         self_healing_engine: Any | None = None,
@@ -99,6 +118,8 @@ class BuilderAgent:
         self.file_writer = file_writer or BuilderFileWriter()
         self.prompt_manager = prompt_manager or BuilderPromptManager()
         self.validator = validator or BuildValidator()
+        self.specification_validator = specification_validator or SpecificationValidator()
+        self.generation_validator = generation_validator or GenerationValidator()
         self.llm_client = llm_client
         self.planner = planner
         self.self_healing_engine = self_healing_engine
@@ -110,9 +131,10 @@ class BuilderAgent:
         if self.llm_manager is None:
             raise RuntimeError("BuilderAgent.build_project requires LLMManager or compatible llm_manager.")
         started = time.perf_counter()
-        spec = ProjectSpec.from_input(specification)
+        spec = self._project_spec_for(specification)
         project_root = self.file_writer.create_project_root(self.workspace, spec)
         report = BuilderAgentReport(spec.name, project_root)
+        report.specification_result = self._validate_specification(specification, spec)
         try:
             self._generate_all_files(spec, project_root, report)
             self._validate_and_repair(spec, project_root, report)
@@ -143,9 +165,55 @@ class BuilderAgent:
         for project_file in spec.files:
             prompt = self.prompt_manager.build_file_prompt(spec, project_file)
             report.prompts[project_file.path.as_posix()] = prompt
-            content = self._ask_ollama(prompt)
+            content = self._generate_valid_file(spec, project_file, prompt, report)
             written = self.file_writer.write_file(project_root, project_file.path, content)
             report.generated_files.append(written)
+
+    def _generate_valid_file(
+        self,
+        spec: ProjectSpec,
+        project_file: ProjectFile,
+        prompt: str,
+        report: BuilderAgentReport,
+    ) -> str:
+        current_prompt = prompt
+        last_errors: list[str] = []
+        for attempt in range(self.retry_limit + 1):
+            content = self._ask_ollama(current_prompt)
+            result = self.generation_validator.validate(spec, project_file, content)
+            if result.success:
+                return content
+            last_errors = result.errors
+            report.generation_validation_errors[project_file.path.as_posix()] = result.errors
+            if attempt >= self.retry_limit:
+                break
+            current_prompt = self.prompt_manager.build_generation_correction_prompt(
+                spec,
+                project_file,
+                content,
+                result.to_message(),
+            )
+            report.retries += 1
+        raise ValueError(f"Generated content failed validation for {project_file.path}: {'; '.join(last_errors)}")
+
+    def _project_spec_for(self, specification: str | dict[str, Any]) -> ProjectSpec:
+        if isinstance(specification, str):
+            expected = self.specification_validator.expected_from_prompt(specification)
+            if expected is not None:
+                return expected.to_project_spec()
+        return ProjectSpec.from_input(specification)
+
+    def _validate_specification(
+        self,
+        specification: str | dict[str, Any],
+        spec: ProjectSpec,
+    ) -> SpecificationValidationResult | None:
+        if not isinstance(specification, str):
+            return None
+        expected = self.specification_validator.expected_from_prompt(specification)
+        if expected is None:
+            return None
+        return self.specification_validator.validate_project_spec(expected, spec)
 
     def _validate_and_repair(self, spec: ProjectSpec, project_root: Path, report: BuilderAgentReport) -> None:
         for attempt in range(self.retry_limit + 1):
@@ -178,7 +246,7 @@ class BuilderAgent:
         for project_file in failed_files:
             current = self.file_writer.read_file(project_root, project_file.path)
             prompt = self.prompt_manager.build_repair_prompt(spec, project_file, current, validation_result.output)
-            content = self._ask_ollama(prompt)
+            content = self._generate_valid_file(spec, project_file, prompt, report)
             self.file_writer.write_file(project_root, project_file.path, content)
             report.retries += 1
 

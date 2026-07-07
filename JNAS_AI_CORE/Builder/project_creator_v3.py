@@ -14,6 +14,7 @@ except ImportError:
 
 from .llm_interface import BuilderLLMClient
 from .project_spec import ProjectFile, ProjectSpec
+from .specification_validator import SpecificationValidator
 
 
 class ProjectCreator:
@@ -23,10 +24,12 @@ class ProjectCreator:
         self,
         llm_client: BuilderLLMClient,
         planner: Any | None = None,
+        specification_validator: SpecificationValidator | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.planner = planner if planner is not None else (Planner() if Planner is not None else None)
+        self.specification_validator = specification_validator or SpecificationValidator()
         self.logger = logger or logging.getLogger(__name__)
 
     def create(self, user_prompt: str) -> tuple[ProjectSpec, str]:
@@ -40,8 +43,14 @@ class ProjectCreator:
             plan_summary = str(getattr(plan, "goal", user_prompt))
         self.logger.info("Planner Finished.")
         self.logger.info("Project Specification Started.")
+        expected = self.specification_validator.expected_from_prompt(user_prompt)
         response = self.llm_client.generate(self._structure_prompt(user_prompt, plan_summary))
         spec = self._parse_spec(user_prompt, response.content)
+        if expected is not None:
+            validation = self.specification_validator.validate_project_spec(expected, spec)
+            if not validation.success:
+                self.logger.warning("Project specification rejected: %s", validation.to_message())
+                spec = expected.to_project_spec()
         self.logger.info("Project Specification Finished.")
         return spec, plan_id
 

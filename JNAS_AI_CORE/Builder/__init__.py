@@ -21,6 +21,7 @@ from .builder_v3 import BuilderAgentV3, BuilderPipeline
 from .file_writer import BuilderFileWriter
 from .generator_v3 import LLMGenerator
 from .generator import CodeGenerator
+from .generation_validator import GenerationValidationResult, GenerationValidator
 from .llm_interface import (
     BaseLLMProvider,
     BuilderLLMClient,
@@ -38,6 +39,7 @@ from .provider_factory_v3 import BuilderProviderFactory, ConfiguredLLMProvider, 
 from .report_v2 import BuilderV2Report, SelfHealingAction
 from .reporter_v3 import BuilderReporter, BuilderV3Report
 from .reporter import BuildReport, BuildReporter
+from .specification_validator import ExpectedProjectSpecification, SpecificationValidationResult, SpecificationValidator
 from .tester import TestOutcome, TestRunner
 from .validation_v3 import Compiler, PytestRunner
 from .validator import BuildValidator, ValidationResult
@@ -63,6 +65,8 @@ __all__ = [
     "Compiler",
     "ConfiguredLLMProvider",
     "GeminiProvider",
+    "GenerationValidationResult",
+    "GenerationValidator",
     "GroqProvider",
     "LLMGenerator",
     "OllamaProvider",
@@ -72,6 +76,9 @@ __all__ = [
     "ProjectSpec",
     "ProviderConfig",
     "PytestRunner",
+    "ExpectedProjectSpecification",
+    "SpecificationValidationResult",
+    "SpecificationValidator",
     "BuildValidator",
     "SelfHealingAction",
     "TestRunner",
