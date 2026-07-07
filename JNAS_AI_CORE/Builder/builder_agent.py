@@ -11,8 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from .file_writer import BuilderFileWriter
+from .llm_interface import BuilderLLMClient
+from .pipeline import BuilderExecutionPipeline
 from .project_spec import ProjectFile, ProjectSpec
 from .prompt_manager import BuilderPromptManager
+from .report_v2 import BuilderV2Report
 from .utils import call_flexible, get_logger, write_text_file
 from .validator import BuildValidator, ValidationResult
 
@@ -85,21 +88,27 @@ class BuilderAgent:
         file_writer: BuilderFileWriter | None = None,
         prompt_manager: BuilderPromptManager | None = None,
         validator: BuildValidator | None = None,
+        llm_client: BuilderLLMClient | None = None,
+        planner: Any | None = None,
+        self_healing_engine: Any | None = None,
         retry_limit: int = 3,
         logger: logging.Logger | None = None,
     ) -> None:
         self.llm_manager = llm_manager or (LLMManager() if LLMManager is not None else None)
-        if self.llm_manager is None:
-            raise RuntimeError("BuilderAgent requires LLMManager or compatible llm_manager.")
         self.workspace = workspace or Path("workspace") / "generated_projects"
         self.file_writer = file_writer or BuilderFileWriter()
         self.prompt_manager = prompt_manager or BuilderPromptManager()
         self.validator = validator or BuildValidator()
+        self.llm_client = llm_client
+        self.planner = planner
+        self.self_healing_engine = self_healing_engine
         self.retry_limit = retry_limit
         self.logger = logger or get_logger(__name__)
 
     def build_project(self, specification: str | dict[str, Any]) -> BuilderAgentReport:
         """Build a complete project from a project specification."""
+        if self.llm_manager is None:
+            raise RuntimeError("BuilderAgent.build_project requires LLMManager or compatible llm_manager.")
         started = time.perf_counter()
         spec = ProjectSpec.from_input(specification)
         project_root = self.file_writer.create_project_root(self.workspace, spec)
@@ -113,6 +122,22 @@ class BuilderAgent:
         report.duration = time.perf_counter() - started
         self._save_report(report)
         return report
+
+    def execute(self, specification: str | dict[str, Any]) -> BuilderV2Report:
+        """Execute the Builder Agent V2 autonomous project pipeline."""
+        llm_client = self.llm_client or BuilderLLMClient()
+        pipeline = BuilderExecutionPipeline(
+            workspace=self.workspace,
+            file_writer=self.file_writer,
+            prompt_manager=self.prompt_manager,
+            validator=self.validator,
+            llm_client=llm_client,
+            planner=self.planner,
+            self_healing_engine=self.self_healing_engine,
+            retry_limit=self.retry_limit,
+            logger=self.logger,
+        )
+        return pipeline.execute(specification)
 
     def _generate_all_files(self, spec: ProjectSpec, project_root: Path, report: BuilderAgentReport) -> None:
         for project_file in spec.files:
