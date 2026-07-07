@@ -1,6 +1,6 @@
 """
 builder.templates
-==================
+------------------
 
 Centralized templates used by the Builder Engine:
     - LLM prompt templates for module/test generation

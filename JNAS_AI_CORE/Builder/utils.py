@@ -1,6 +1,6 @@
 """
 builder.utils
-=============
+-------------
 
 Shared low-level utilities for the Builder Engine.
 

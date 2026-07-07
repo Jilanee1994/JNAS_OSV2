@@ -15,7 +15,6 @@ DEFAULT_CONFIG = {
         "lock_timeout": 10,
         "lock_poll_interval": 0.1,
     },
-<<<<<<< HEAD
     "code_generation": {
         "ollama_host": "http://127.0.0.1:11434",
         "model": "qwen2.5:7b",
@@ -47,6 +46,4 @@ DEFAULT_CONFIG = {
             }
         ]
     },
-=======
->>>>>>> d3aaca4f603cf5fe37898156986c9973ca77d20c
 }

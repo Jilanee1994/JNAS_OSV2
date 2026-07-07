@@ -1,6 +1,6 @@
 """
 builder.tester
-==============
+--------------
 
 Executes pytest against generated modules and captures structured
 pass/fail results for the Builder Engine's reporting stage.

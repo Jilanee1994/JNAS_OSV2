@@ -1,6 +1,6 @@
 """
 builder.builder
-================
+----------------
 
 Builder Engine v1 -- orchestrates automatic module generation for
 JNAS_AI_CORE.
@@ -37,6 +37,8 @@ from .tester import TestRunner
 from .utils import get_logger, call_flexible, write_text_file
 
 __all__ = ["BuilderEngine", "main"]
+
+_UNSET = object()
 
 
 def _try_import(module_path: str, class_name: str) -> Optional[type]:
@@ -86,7 +88,7 @@ class BuilderEngine:
     def __init__(
         self,
         project_root: Optional[Path] = None,
-        llm_manager: Optional[Any] = None,
+        llm_manager: Any = _UNSET,
         file_tool: Optional[Any] = None,
         project_reader: Optional[Any] = None,
         project_scanner: Optional[Any] = None,
@@ -115,7 +117,11 @@ class BuilderEngine:
         self.logger = logger or get_logger(__name__)
         self.project_root = Path(project_root) if project_root else Path.cwd()
 
-        self.llm_manager = llm_manager or self._auto_wire("llm.llm_manager", "LLMManager")
+        self.llm_manager = (
+            self._auto_wire("llm.llm_manager", "LLMManager")
+            if llm_manager is _UNSET
+            else llm_manager
+        )
         self.file_tool = file_tool or self._auto_wire("tools.file_tool", "FileTool")
         self.project_reader = project_reader or self._auto_wire(
             "agent.project_reader", "ProjectReader"

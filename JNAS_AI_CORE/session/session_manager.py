@@ -310,9 +310,22 @@ class SessionManager:
                     self._shutdown_sessions.discard(session_id)
                     continue
                 self.stop_auto_heartbeat(session_id)
-                self.add_checkpoint(session_id, "shutdown", {"reason": "graceful_shutdown"})
+                self._add_shutdown_checkpoint(session_id)
             except Exception as exc:
                 self.logger.error("Graceful shutdown failed for %s: %s", session_id, exc)
+
+    def _add_shutdown_checkpoint(self, session_id: str) -> None:
+        """Save a shutdown checkpoint without emitting late-process log records."""
+        with self.persistence.lock(session_id):
+            session = self.persistence.load(session_id)
+            session.checkpoints.append(
+                Checkpoint(
+                    name="shutdown",
+                    data={"reason": "graceful_shutdown", "current_task": session.current_task},
+                )
+            )
+            session.add_timeline("CheckpointCreated", "Checkpoint created: shutdown.")
+            self._save(session)
 
     def _handle_shutdown_signal(self, signum: int, _frame: Any) -> None:
         self.logger.warning("Received shutdown signal %s", signum)

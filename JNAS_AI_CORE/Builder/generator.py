@@ -1,6 +1,6 @@
 """
 builder.generator
-==================
+------------------
 
 Wraps the existing ``LLMManager`` (and optionally ``ContextBuilder`` /
 ``CodeAgent``) to generate module source code, unit tests, and prompt

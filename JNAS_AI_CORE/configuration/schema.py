@@ -14,7 +14,6 @@ CONFIG_SCHEMA = {
     "session.heartbeat_interval": (int, float),
     "session.lock_timeout": (int, float),
     "session.lock_poll_interval": (int, float),
-<<<<<<< HEAD
     "code_generation.ollama_host": str,
     "code_generation.model": str,
     "code_generation.timeout": int,
@@ -29,6 +28,4 @@ CONFIG_SCHEMA = {
     "ai_os.learning_path": str,
     "ai_os.daily_report_path": str,
     "llm_router.providers": list,
-=======
->>>>>>> d3aaca4f603cf5fe37898156986c9973ca77d20c
 }

@@ -1,6 +1,6 @@
 """
 builder.reporter
-=================
+-----------------
 
 Produces build reports (Markdown + in-memory structured data) and
 prints a human-readable build summary to the console.
