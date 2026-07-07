@@ -85,6 +85,24 @@ your real components use different method names, either:
 
 ## CLI usage
 
+Builder V4 autonomous project mode:
+
+```bash
+python build_project.py \
+    --project "Hello Project" \
+    --output workspace/generated_projects \
+    --provider ollama \
+    --milestone 1
+```
+
+This mode calls the local Ollama HTTP API directly, parses
+`===FILE:path=== ... ===END===` file blocks, writes files under the
+requested output directory, runs `python -m compileall`, runs `pytest`,
+performs one automatic repair cycle on validation failure, writes
+`BUILD_REPORT.md`, and exits with `0` only when validation succeeds.
+
+Legacy module mode remains available:
+
 ```bash
 python builder/builder.py <module_name> [--project-root PATH] [--no-tests]
 ```

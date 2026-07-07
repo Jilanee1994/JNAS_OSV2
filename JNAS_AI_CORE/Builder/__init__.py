@@ -18,6 +18,7 @@ from __future__ import annotations
 from .builder_agent import BuilderAgent, BuilderAgentReport
 from .builder import BuilderEngine, main
 from .builder_v3 import BuilderAgentV3, BuilderPipeline
+from .builder_v4 import BuilderV4, BuilderV4Report, DirectOllamaClient, FileResponseParser, GeneratedFile
 from .file_writer import BuilderFileWriter
 from .generator_v3 import LLMGenerator
 from .generator import CodeGenerator
@@ -61,13 +62,18 @@ __all__ = [
     "BuilderReporter",
     "BuilderV2Report",
     "BuilderV3Report",
+    "BuilderV4",
+    "BuilderV4Report",
     "BaseLLMProvider",
     "CodeGenerator",
     "Compiler",
     "ConfiguredLLMProvider",
+    "DirectOllamaClient",
+    "FileResponseParser",
     "GeminiProvider",
     "GenerationValidationResult",
     "GenerationValidator",
+    "GeneratedFile",
     "GroqProvider",
     "LLMGenerator",
     "OllamaProvider",
