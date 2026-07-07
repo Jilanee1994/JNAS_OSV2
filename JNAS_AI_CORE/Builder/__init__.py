@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from .builder_agent import BuilderAgent, BuilderAgentReport
 from .builder import BuilderEngine, main
+from .builder_v3 import BuilderAgentV3, BuilderPipeline
 from .file_writer import BuilderFileWriter
+from .generator_v3 import LLMGenerator
 from .generator import CodeGenerator
 from .llm_interface import (
     BaseLLMProvider,
@@ -29,15 +31,20 @@ from .llm_interface import (
     OpenRouterProvider,
 )
 from .pipeline import BuilderExecutionPipeline, BuilderPatchGenerator
+from .project_creator_v3 import ProjectCreator
 from .project_spec import ProjectFile, ProjectSpec
 from .prompt_manager import BuilderPromptManager
+from .provider_factory_v3 import BuilderProviderFactory, ConfiguredLLMProvider, ProviderConfig
 from .report_v2 import BuilderV2Report, SelfHealingAction
+from .reporter_v3 import BuilderReporter, BuilderV3Report
 from .reporter import BuildReport, BuildReporter
 from .tester import TestOutcome, TestRunner
+from .validation_v3 import Compiler, PytestRunner
 from .validator import BuildValidator, ValidationResult
 
 __all__ = [
     "BuilderAgent",
+    "BuilderAgentV3",
     "BuilderAgentReport",
     "BuilderEngine",
     "BuilderExecutionPipeline",
@@ -46,15 +53,25 @@ __all__ = [
     "BuilderLLMResponse",
     "BuilderPromptManager",
     "BuilderPatchGenerator",
+    "BuilderPipeline",
+    "BuilderProviderFactory",
+    "BuilderReporter",
     "BuilderV2Report",
+    "BuilderV3Report",
     "BaseLLMProvider",
     "CodeGenerator",
+    "Compiler",
+    "ConfiguredLLMProvider",
     "GeminiProvider",
     "GroqProvider",
+    "LLMGenerator",
     "OllamaProvider",
     "OpenRouterProvider",
+    "ProjectCreator",
     "ProjectFile",
     "ProjectSpec",
+    "ProviderConfig",
+    "PytestRunner",
     "BuildValidator",
     "SelfHealingAction",
     "TestRunner",

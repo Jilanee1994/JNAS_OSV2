@@ -46,4 +46,9 @@ DEFAULT_CONFIG = {
             }
         ]
     },
+    "builder_v3": {
+        "workspace": "workspace/generated_projects",
+        "max_retries": 3,
+        "provider_priority": ["ollama", "gemini", "groq", "openrouter"],
+    },
 }
