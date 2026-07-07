@@ -50,7 +50,7 @@ class GenerationValidator:
         """Validate generated content before it is written to disk."""
         errors: list[str] = []
         is_python = project_file.kind == "python" or project_file.path.suffix == ".py"
-        if (not content or not content.strip()) and project_file.path.name != "requirements.txt":
+        if (not content or not content.strip()) and project_file.path.name not in {"requirements.txt", "__init__.py"}:
             errors.append("Generated content is empty.")
         if is_python:
             errors.extend(self._placeholder_errors(content))
@@ -85,14 +85,16 @@ class GenerationValidator:
             return errors
         if not functions and not classes:
             errors.append("Python implementation must define at least one function or class.")
-        expected_function = self._expected_function_name(path)
-        if expected_function and expected_function not in functions and not classes:
+        expected_function = self._expected_function_name(spec, path)
+        if expected_function and expected_function not in functions and expected_function not in classes:
             errors.append(f"Missing required function or class for requested file: {expected_function}")
-        if path.stem == "hello" and "hello" in spec.description.lower() and "hello" not in functions:
-            errors.append("Hello project requires a hello() function in hello.py.")
+        if path.stem == "hello" and "hello" in spec.description.lower() and "greet" not in functions:
+            errors.append("Hello World project requires a greet() function in hello.py.")
         return errors
 
-    def _expected_function_name(self, path: Path) -> str:
+    def _expected_function_name(self, spec: ProjectSpec, path: Path) -> str:
+        if path.stem == "hello" and "hello" in spec.description.lower():
+            return "greet"
         if path.stem in {"main", "config", "models", "service", "app"}:
             return ""
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", path.stem):

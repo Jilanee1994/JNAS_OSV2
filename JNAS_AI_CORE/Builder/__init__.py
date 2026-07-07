@@ -31,6 +31,7 @@ from .llm_interface import (
     OllamaProvider,
     OpenRouterProvider,
 )
+from .package_validator import PackageValidationResult, PackageValidator
 from .pipeline import BuilderExecutionPipeline, BuilderPatchGenerator
 from .project_creator_v3 import ProjectCreator
 from .project_spec import ProjectFile, ProjectSpec
@@ -71,6 +72,8 @@ __all__ = [
     "LLMGenerator",
     "OllamaProvider",
     "OpenRouterProvider",
+    "PackageValidationResult",
+    "PackageValidator",
     "ProjectCreator",
     "ProjectFile",
     "ProjectSpec",

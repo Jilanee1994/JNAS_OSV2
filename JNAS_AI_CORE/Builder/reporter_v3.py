@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .report_v2 import SelfHealingAction
+from .package_validator import PackageValidationResult
 from .utils import write_text_file
 from .validator import ValidationResult
 
@@ -20,6 +21,7 @@ class BuilderV3Report:
     plan_id: str = ""
     files_created: list[Path] = field(default_factory=list)
     compile_result: ValidationResult | None = None
+    package_result: PackageValidationResult | None = None
     pytest_result: ValidationResult | None = None
     retries: int = 0
     self_healing_actions: list[SelfHealingAction] = field(default_factory=list)
@@ -63,6 +65,12 @@ class BuilderReporter:
         lines.extend(f"- `{path}`" for path in report.files_created) if report.files_created else lines.append("- None")
         lines.extend(["", "## Compile Status"])
         lines.extend(self._validation_lines(report.compile_result))
+        lines.extend(["", "## Package Validation"])
+        if report.package_result is None:
+            lines.append("- Status: NOT RUN")
+        else:
+            lines.append(f"- Status: {'PASS' if report.package_result.success else 'FAIL'}")
+            lines.extend(["", "```text", report.package_result.to_message(), "```"])
         lines.extend(["", "## Pytest Status"])
         lines.extend(self._validation_lines(report.pytest_result))
         lines.extend(["", "## Self-Healing Actions"])

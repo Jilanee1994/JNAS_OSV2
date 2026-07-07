@@ -51,6 +51,7 @@ class ProjectCreator:
             if not validation.success:
                 self.logger.warning("Project specification rejected: %s", validation.to_message())
                 spec = expected.to_project_spec()
+        spec = self._standardize_package_layout(spec)
         self.logger.info("Project Specification Finished.")
         return spec, plan_id
 
@@ -98,3 +99,20 @@ class ProjectCreator:
                 ],
             )
         return ProjectSpec.from_input({"name": name, "description": user_prompt})
+
+    def _standardize_package_layout(self, spec: ProjectSpec) -> ProjectSpec:
+        package_name = spec.slug
+        files_by_path: dict[Path, ProjectFile] = {}
+        for item in spec.files:
+            path = item.path
+            if path.suffix == ".py" and path.parts[0] != "tests" and len(path.parts) == 1:
+                path = Path(package_name) / path.name
+            files_by_path[path] = ProjectFile(path, item.purpose, item.kind)
+        self._ensure_file(files_by_path, Path(package_name) / "__init__.py", "Package exports.", "python")
+        self._ensure_file(files_by_path, Path("README.md"), "Project overview.", "markdown")
+        self._ensure_file(files_by_path, Path("requirements.txt"), "Project dependencies.", "text")
+        self._ensure_file(files_by_path, Path("pyproject.toml"), "Project metadata.", "text")
+        return ProjectSpec(spec.name, spec.slug, spec.description, list(files_by_path.values()))
+
+    def _ensure_file(self, files: dict[Path, ProjectFile], path: Path, purpose: str, kind: str) -> None:
+        files.setdefault(path, ProjectFile(path, purpose, kind))

@@ -137,12 +137,14 @@ class SpecificationValidator:
         files = self._explicit_python_files(prompt)
         if not files:
             return None
-        required = set(files)
-        for file_path in files:
-            required.add(Path("tests") / f"test_{file_path.stem}.py")
-        forbidden = {path for path in self._DEFAULT_FORBIDDEN if path not in required}
         name = self._name_from_prompt(prompt, files[0])
         slug = self._slug_from_name(name)
+        package_name = slug
+        required = {Path("README.md"), Path("requirements.txt"), Path("pyproject.toml"), Path(package_name) / "__init__.py"}
+        for file_path in files:
+            required.add(Path(package_name) / file_path.name)
+            required.add(Path("tests") / f"test_{file_path.stem}.py")
+        forbidden = {path for path in self._DEFAULT_FORBIDDEN if path not in required}
         return ExpectedProjectSpecification(
             name=name,
             slug=slug,

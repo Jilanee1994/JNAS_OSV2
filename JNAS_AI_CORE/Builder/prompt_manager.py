@@ -35,6 +35,9 @@ class BuilderPromptManager:
             f"File kind: {project_file.kind}\n\n"
             "Use Python 3.12, type hints, docstrings, and simple maintainable design for Python files.\n"
             "For tests, use pytest and avoid external services.\n"
+            f"When importing generated package code, use absolute imports from `{spec.slug}`.\n"
+            "For Hello World projects, implement greet() in hello.py and test it with "
+            f"`from {spec.slug}.hello import greet`.\n"
         )
 
     def build_repair_prompt(
@@ -54,8 +57,10 @@ class BuilderPromptManager:
             "Never output placeholder code, TODO, FIXME, pass-only implementation, fake imports, or NotImplementedError.\n"
             "The corrected file must be executable production-ready Python when the file kind is Python.\n\n"
             f"Project name: {spec.name}\n"
+            f"Project slug: {spec.slug}\n"
             f"File path: {project_file.path.as_posix()}\n"
             f"File purpose: {project_file.purpose}\n\n"
+            f"Tests must import generated package modules from `{spec.slug}`.\n"
             "Only use these validation errors to produce the corrected file:\n"
             f"{errors}\n"
         )
@@ -85,8 +90,10 @@ class BuilderPromptManager:
             "- fake imports\n\n"
             f"{self._specification_text(spec)}"
             f"Project name: {spec.name}\n"
+            f"Project slug: {spec.slug}\n"
             f"File path: {project_file.path.as_posix()}\n"
             f"File purpose: {project_file.purpose}\n\n"
+            f"Tests must import generated package modules from `{spec.slug}`.\n"
             "Validation errors:\n"
             f"{validation_errors}\n"
         )

@@ -18,6 +18,7 @@ except ImportError:
 from .file_writer import BuilderFileWriter
 from .generator_v3 import LLMGenerator
 from .llm_interface import BuilderLLMClient
+from .package_validator import PackageValidator
 from .pipeline import BuilderPatchGenerator
 from .project_creator_v3 import ProjectCreator
 from .provider_factory_v3 import BuilderProviderFactory
@@ -39,6 +40,7 @@ class BuilderPipeline:
         file_writer: BuilderFileWriter | None = None,
         compiler: Compiler | None = None,
         pytest_runner: PytestRunner | None = None,
+        package_validator: PackageValidator | None = None,
         reporter: BuilderReporter | None = None,
         llm_client: BuilderLLMClient | None = None,
         self_healing_engine: Any | None = None,
@@ -53,6 +55,7 @@ class BuilderPipeline:
         self.file_writer = file_writer or BuilderFileWriter()
         self.compiler = compiler or Compiler(logger=self.logger)
         self.pytest_runner = pytest_runner or PytestRunner(logger=self.logger)
+        self.package_validator = package_validator or PackageValidator()
         self.reporter = reporter or BuilderReporter()
         self.self_healing_engine = self_healing_engine
         self.max_retries = max_retries
@@ -96,6 +99,12 @@ class BuilderPipeline:
                     return
                 report.retries += 1
                 continue
+
+            package_result = self.package_validator.validate_and_repair(project_root, spec.slug)
+            report.package_result = package_result
+            if not package_result.success:
+                report.remaining_issues.append(package_result.to_message())
+                return
 
             pytest_result = self.pytest_runner.run(project_root)
             report.pytest_result = pytest_result

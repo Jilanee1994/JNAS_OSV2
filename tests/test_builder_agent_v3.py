@@ -53,18 +53,20 @@ class FakeLLMClient:
         self.prompts.append(prompt)
         if "Create a compact JSON project specification" in prompt:
             return BuilderLLMResponse("fake-provider", json.dumps(self._spec()), True)
-        path = self._path(prompt)
+        path = self._path(prompt).replace("\\", "/")
         if path == "README.md":
             return BuilderLLMResponse("fake-provider", "# Hello Project\n", True)
         if path == "requirements.txt":
             return BuilderLLMResponse("fake-provider", "", True)
-        if path == "hello.py":
+        if path == "pyproject.toml":
+            return BuilderLLMResponse("fake-provider", "[project]\nname = \"hello-project\"\nversion = \"0.1.0\"\n", True)
+        if path.endswith("test_hello.py"):
+            return BuilderLLMResponse("fake-provider", "from hello_project.hello import greet\n\n\ndef test_greet():\n    assert greet() == 'hello'\n", True)
+        if path.endswith("hello.py"):
             self.hello_generations += 1
             if self.broken_first and self.hello_generations == 1:
-                return BuilderLLMResponse("fake-provider", "def hello(:\n    return 'hello'\n", True)
-            return BuilderLLMResponse("fake-provider", "def hello() -> str:\n    return 'hello'\n", True)
-        if path == "tests/test_hello.py":
-            return BuilderLLMResponse("fake-provider", "from hello import hello\n\n\ndef test_hello():\n    assert hello() == 'hello'\n", True)
+                return BuilderLLMResponse("fake-provider", "def greet(:\n    return 'hello'\n", True)
+            return BuilderLLMResponse("fake-provider", "def greet() -> str:\n    return 'hello'\n", True)
         return BuilderLLMResponse("fake-provider", "", True)
 
     def _spec(self) -> dict[str, object]:
@@ -75,7 +77,7 @@ class FakeLLMClient:
             "files": [
                 {"path": "README.md", "purpose": "Overview", "kind": "markdown"},
                 {"path": "requirements.txt", "purpose": "Dependencies", "kind": "text"},
-                {"path": "hello.py", "purpose": "Hello implementation", "kind": "python"},
+                {"path": "hello_project/hello.py", "purpose": "Hello implementation", "kind": "python"},
                 {"path": "tests/test_hello.py", "purpose": "Hello tests", "kind": "python"},
             ],
         }
@@ -133,7 +135,7 @@ def test_project_creator_generates_spec_from_llm() -> None:
     spec, plan_id = creator.create("Build Hello Project")
     assert plan_id == "plan-v3"
     assert spec.name == "Hello Project"
-    assert Path("hello.py") in [item.path for item in spec.files]
+    assert Path("hello_project") / "hello.py" in [item.path for item in spec.files]
 
 
 def test_builder_pipeline_builds_hello_project(tmp_path: Path) -> None:
@@ -145,14 +147,14 @@ def test_builder_pipeline_builds_hello_project(tmp_path: Path) -> None:
     )
     report = pipeline.run("Build Hello Project")
     assert report.final_result == "SUCCESS"
-    assert (report.project_root / "hello.py").exists()
+    assert (report.project_root / "hello_project" / "hello.py").exists()
     assert (report.project_root / "BUILD_REPORT.md").exists()
     assert report.provider_used == "fake-provider"
 
 
 def test_builder_pipeline_invokes_self_healing(tmp_path: Path) -> None:
     llm = FakeLLMClient()
-    recovery = FakeRecovery("def hello() -> str:\n    return 'hello'\n")
+    recovery = FakeRecovery("def greet() -> str:\n    return 'hello'\n")
     pipeline = BuilderPipeline(
         workspace=tmp_path,
         project_creator=ProjectCreator(llm, planner=FakePlanner()),
@@ -180,10 +182,13 @@ def test_builder_agent_v3_facade_uses_pipeline(tmp_path: Path) -> None:
 
 
 def test_compiler_and_pytest_runner_wrap_validator(tmp_path: Path) -> None:
-    (tmp_path / "hello.py").write_text("def hello() -> str:\n    return 'hello'\n", encoding="utf-8")
+    package = tmp_path / "hello_project"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "hello.py").write_text("def greet() -> str:\n    return 'hello'\n", encoding="utf-8")
     tests = tmp_path / "tests"
     tests.mkdir()
-    (tests / "test_hello.py").write_text("from hello import hello\n\n\ndef test_hello():\n    assert hello() == 'hello'\n", encoding="utf-8")
+    (tests / "test_hello.py").write_text("from hello_project.hello import greet\n\n\ndef test_greet():\n    assert greet() == 'hello'\n", encoding="utf-8")
     assert Compiler().run(tmp_path).success
     assert PytestRunner().run(tmp_path).success
 
