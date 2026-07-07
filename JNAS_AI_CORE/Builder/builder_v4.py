@@ -309,10 +309,42 @@ class BuilderV4:
 
     def _write_files(self, project_root: Path, files: list[GeneratedFile], report: BuilderV4Report) -> None:
         for generated in files:
-            target = self._safe_path(project_root, generated.path)
+            target = self._safe_path(project_root, self._normalize_generated_path(project_root, generated.path))
             write_text_file(target, generated.content)
             if target not in report.generated_files:
                 report.generated_files.append(target)
+
+    def _normalize_generated_path(self, project_root: Path, generated_path: Path) -> Path:
+        """Normalize LLM file paths so they are relative to the project root."""
+        raw = generated_path.as_posix().strip()
+        if not raw:
+            raise ValueError("Generated file path is empty.")
+        candidate = Path(raw)
+        if candidate.is_absolute():
+            raise ValueError(f"Generated path escapes project root: {generated_path}")
+        parts = [part for part in candidate.parts if part not in {"", "."}]
+        if any(part == ".." for part in parts):
+            raise ValueError(f"Generated path escapes project root: {generated_path}")
+        root_parts = list(project_root.parts)
+        for index in range(len(parts)):
+            suffix = parts[index:]
+            if len(suffix) >= len(root_parts) and self._parts_equal(suffix[: len(root_parts)], root_parts):
+                return Path(*suffix[len(root_parts) :])
+        root_name = project_root.name
+        for index, part in enumerate(parts):
+            if part == root_name and index + 1 < len(parts):
+                return Path(*parts[index + 1 :])
+        if parts and parts[0] in {"path", "applications", "workspace"} and root_name in parts:
+            root_index = parts.index(root_name)
+            if root_index + 1 < len(parts):
+                return Path(*parts[root_index + 1 :])
+        normalized = Path(*parts)
+        if normalized.parts and normalized.parts[0] == project_root.name:
+            return Path(*normalized.parts[1:])
+        return normalized
+
+    def _parts_equal(self, left: list[str], right: list[str]) -> bool:
+        return [part.lower() for part in left] == [part.lower() for part in right]
 
     def _validate(self, project_root: Path, report: BuilderV4Report) -> None:
         report.compile_result = self.validator.compile_project(project_root)

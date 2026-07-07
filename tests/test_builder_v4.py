@@ -136,6 +136,35 @@ x = 1
     assert any("escapes project root" in error for error in report.errors)
 
 
+def test_builder_v4_sanitizes_project_root_paths(tmp_path: Path) -> None:
+    response = """===FILE:applications/hello/README.md===
+# Hello
+
+===FILE:path/applications/hello/tests/test_job_search.py===
+def test_placeholder() -> None:
+    assert True
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("hello", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "hello"
+    assert (root / "README.md").exists()
+    assert (root / "tests" / "test_job_search.py").exists()
+    assert not (root / "applications").exists()
+    assert not (root / "path").exists()
+
+
+def test_builder_v4_rejects_absolute_generated_path(tmp_path: Path) -> None:
+    response = """===FILE:/home/ubuntu/secret.py===
+x = 1
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("hello", tmp_path / "applications", "ollama", 1)
+    assert not report.success
+    assert any("escapes project root" in error for error in report.errors)
+
+
 def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> None:
     class FakeClient:
         def generate(self, prompt: str) -> str:
