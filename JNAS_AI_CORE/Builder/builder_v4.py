@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import re
 import subprocess
@@ -173,6 +174,15 @@ class FileResponseParser:
 
 class BuilderV4:
     """Autonomous project builder using direct Ollama API and file blocks."""
+
+    _IMPORT_PACKAGE_MAP = {
+        "PIL": "Pillow",
+        "bs4": "beautifulsoup4",
+        "cv2": "opencv-python",
+        "sklearn": "scikit-learn",
+        "yaml": "PyYAML",
+    }
+    _TEST_ONLY_IMPORTS = {"pytest"}
 
     def __init__(
         self,
@@ -455,17 +465,26 @@ class BuilderV4:
         errors.extend(f"Duplicate folder detected: {name}" for name in duplicate_folders)
         errors.extend(self._python_quality_errors(project_root))
         errors.extend(self._import_quality_errors(project_root))
+        errors.extend(self._dependency_quality_errors(project_root))
         return errors
 
     def _repair_preflight(self, project_name: str, project_root: Path, errors: list[str], report: BuilderV4Report) -> None:
         _ = errors
         self._remove_stale_root_python(project_root)
+        self._remove_stale_tests(project_root)
         self._remove_nested_project_roots(project_root)
         files = self._fallback_files(project_name)
         self._write_files(project_root, files, report)
 
     def _remove_stale_root_python(self, project_root: Path) -> None:
         for path in project_root.glob("*.py"):
+            path.unlink()
+
+    def _remove_stale_tests(self, project_root: Path) -> None:
+        tests_dir = project_root / "tests"
+        if not tests_dir.exists():
+            return
+        for path in tests_dir.glob("test_*.py"):
             path.unlink()
 
     def _remove_nested_project_roots(self, project_root: Path) -> None:
@@ -583,6 +602,71 @@ class BuilderV4:
                         if path.parent == src_dir and root_module in module_names:
                             errors.append(f"{path.relative_to(project_root)} uses absolute sibling import: {alias.name}")
         return errors
+
+    def _dependency_quality_errors(self, project_root: Path) -> list[str]:
+        requirements = self._declared_requirements(project_root)
+        local_modules = self._local_module_names(project_root)
+        errors: list[str] = []
+        for path in project_root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            for module_name in self._imported_roots(path):
+                if self._is_allowed_import(module_name, local_modules):
+                    continue
+                package_name = self._IMPORT_PACKAGE_MAP.get(module_name, module_name)
+                if package_name.lower() not in requirements:
+                    errors.append(
+                        f"{path.relative_to(project_root)} imports undeclared third-party dependency: {package_name}"
+                    )
+        return errors
+
+    def _declared_requirements(self, project_root: Path) -> set[str]:
+        requirements_path = project_root / "requirements.txt"
+        if not requirements_path.exists():
+            return set()
+        requirements: set[str] = set()
+        for line in requirements_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+                continue
+            name = re.split(r"[<>=!~\[]", stripped, maxsplit=1)[0].strip()
+            if name:
+                requirements.add(name.lower())
+        return requirements
+
+    def _local_module_names(self, project_root: Path) -> set[str]:
+        names = {"src"}
+        names.update(path.stem for path in project_root.glob("*.py"))
+        for folder in (project_root / "src", project_root / "tests"):
+            if folder.exists():
+                names.update(path.stem for path in folder.glob("*.py"))
+        return names
+
+    def _imported_roots(self, path: Path) -> set[str]:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, IndentationError):
+            return set()
+        roots: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                roots.add(node.module.split(".", 1)[0])
+        return roots
+
+    def _is_allowed_import(self, module_name: str, local_modules: set[str]) -> bool:
+        if module_name in local_modules or module_name in self._TEST_ONLY_IMPORTS:
+            return True
+        if module_name in sys.builtin_module_names:
+            return True
+        if module_name in getattr(sys, "stdlib_module_names", set()):
+            return True
+        spec = importlib.util.find_spec(module_name)
+        if spec is None or spec.origin is None:
+            return False
+        origin = spec.origin.lower()
+        return "site-packages" not in origin and "dist-packages" not in origin
 
     def _targeted_repair_files(
         self,

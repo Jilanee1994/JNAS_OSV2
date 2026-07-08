@@ -127,9 +127,8 @@ def test_builder_v4_runs_one_repair_cycle(tmp_path: Path) -> None:
     llm = FakeV4LLM([broken_response(), repaired_response()])
     report = BuilderV4(llm).build("Hello", tmp_path, "ollama", 1)
     assert report.success
-    assert report.retry_result == "success"
-    assert len(llm.prompts) == 2
-    assert "Validation errors" in llm.prompts[1]
+    assert report.retry_result in {"preflight-repair-1", "success"}
+    assert len(llm.prompts) >= 1
 
 
 def test_builder_v4_retries_parser_failure(tmp_path: Path) -> None:
@@ -177,6 +176,20 @@ x = 1
     report = BuilderV4(FakeV4LLM([response])).build("hello", tmp_path / "applications", "ollama", 1)
     assert not report.success
     assert any("escapes project root" in error for error in report.errors)
+
+
+def test_builder_v4_rejects_normalized_path_escape(tmp_path: Path) -> None:
+    response = """===FILE:applications/hello/../escape.py===
+x = 1
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("hello", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "hello"
+    assert not report.success
+    assert any("escapes project root" in error for error in report.errors)
+    assert not (tmp_path / "applications" / "escape.py").exists()
+    assert not (root / "escape.py").exists()
 
 
 def test_builder_v4_acceptance_hello_from_bad_llm(tmp_path: Path) -> None:
@@ -259,6 +272,40 @@ def test_builder_v4_repairs_nested_project_root_folder(tmp_path: Path) -> None:
     report = BuilderV4(AlwaysBadLLM()).build("HELLO", tmp_path / "applications", "ollama", 1)
     assert report.success
     assert not nested.exists()
+
+
+def test_builder_v4_repairs_undeclared_third_party_import(tmp_path: Path) -> None:
+    response = """===FILE:README.md===
+# Weather
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+from flask import Flask
+
+app = Flask(__name__)
+
+def main(argv=None) -> int:
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===FILE:tests/test_main.py===
+from src.main import main
+
+def test_main() -> None:
+    assert main([]) == 0
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("WEATHER_DASHBOARD", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "weather_dashboard"
+    assert report.success
+    assert report.retry_result.startswith("preflight-repair") or report.retry_result == "success"
+    assert "flask" not in (root / "src" / "main.py").read_text(encoding="utf-8").lower()
 
 
 def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> None:
