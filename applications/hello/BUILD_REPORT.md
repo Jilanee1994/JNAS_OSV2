@@ -4,7 +4,7 @@
 - Milestone: `1`
 - Project root: `applications\hello`
 - Final status: SUCCESS
-- Execution time: 4.13s
+- Execution time: 4.32s
 
 ## Generated Files
 - `C:\JNAS\VM2\JNAS_OSV2-main\applications\hello\README.md`
@@ -30,7 +30,7 @@ PASS
 
 ```text
 ..                                                                       [100%]
-2 passed in 0.03s
+2 passed in 0.04s
 ```
 
 ## Runtime Result

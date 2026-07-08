@@ -443,6 +443,7 @@ class BuilderV4:
 
     def _preflight_validate(self, project_root: Path) -> list[str]:
         errors: list[str] = []
+        self._repair_package_imports(project_root)
         for required in ("README.md", "requirements.txt", "src/__init__.py", "src/main.py"):
             if not (project_root / required).exists():
                 errors.append(f"Missing required file: {required}")
@@ -450,18 +451,33 @@ class BuilderV4:
             errors.append("Missing tests directory or test files.")
         duplicate_names = self._duplicate_filenames(project_root)
         errors.extend(f"Duplicate filename detected: {name}" for name in duplicate_names)
+        duplicate_folders = self._duplicate_folders(project_root)
+        errors.extend(f"Duplicate folder detected: {name}" for name in duplicate_folders)
         errors.extend(self._python_quality_errors(project_root))
+        errors.extend(self._import_quality_errors(project_root))
         return errors
 
     def _repair_preflight(self, project_name: str, project_root: Path, errors: list[str], report: BuilderV4Report) -> None:
         _ = errors
         self._remove_stale_root_python(project_root)
+        self._remove_nested_project_roots(project_root)
         files = self._fallback_files(project_name)
         self._write_files(project_root, files, report)
 
     def _remove_stale_root_python(self, project_root: Path) -> None:
         for path in project_root.glob("*.py"):
             path.unlink()
+
+    def _remove_nested_project_roots(self, project_root: Path) -> None:
+        for folder_name in ("applications", "path", project_root.name):
+            nested = project_root / folder_name
+            if nested.exists() and nested.is_dir():
+                for path in sorted(nested.rglob("*"), reverse=True):
+                    if path.is_file():
+                        path.unlink()
+                    elif path.is_dir():
+                        path.rmdir()
+                nested.rmdir()
 
     def _runtime_validate(self, project_root: Path) -> ValidationResult:
         command = [sys.executable, "-m", "src.main", "--help"]
@@ -488,6 +504,14 @@ class BuilderV4:
             seen.add(path.name)
         return duplicates
 
+    def _duplicate_folders(self, project_root: Path) -> set[str]:
+        forbidden = {"applications", "path", project_root.name}
+        duplicates: set[str] = set()
+        for path in project_root.rglob("*"):
+            if path.is_dir() and path.name in forbidden and path != project_root:
+                duplicates.add(path.name)
+        return duplicates
+
     def _python_quality_errors(self, project_root: Path) -> list[str]:
         errors: list[str] = []
         bad_patterns = ("TODO", "FIXME", "your_module", "placeholder", "NotImplementedError")
@@ -511,6 +535,53 @@ class BuilderV4:
                     function_names.add(node.name)
                     if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
                         errors.append(f"{path.relative_to(project_root)} has empty function: {node.name}")
+        return errors
+
+    def _repair_package_imports(self, project_root: Path) -> None:
+        src_dir = project_root / "src"
+        if not src_dir.exists():
+            return
+        module_names = {path.stem for path in src_dir.glob("*.py") if path.name != "__init__.py"}
+        for path in src_dir.glob("*.py"):
+            original = path.read_text(encoding="utf-8")
+            updated = original
+            for module_name in module_names:
+                if path.stem == module_name:
+                    continue
+                updated = re.sub(
+                    rf"(^\s*from\s+){re.escape(module_name)}(\s+import\s+)",
+                    rf"\1.{module_name}\2",
+                    updated,
+                    flags=re.MULTILINE,
+                )
+            if updated != original:
+                path.write_text(updated, encoding="utf-8")
+
+    def _import_quality_errors(self, project_root: Path) -> list[str]:
+        errors: list[str] = []
+        src_dir = project_root / "src"
+        if not src_dir.exists():
+            return errors
+        module_names = {path.stem for path in src_dir.glob("*.py") if path.name != "__init__.py"}
+        for path in project_root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, IndentationError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    if path.parent == src_dir and node.level == 0 and module.split(".", 1)[0] in module_names:
+                        errors.append(f"{path.relative_to(project_root)} uses absolute sibling import: {module}")
+                    if node.level > 1:
+                        errors.append(f"{path.relative_to(project_root)} uses invalid relative import level.")
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        root_module = alias.name.split(".", 1)[0]
+                        if path.parent == src_dir and root_module in module_names:
+                            errors.append(f"{path.relative_to(project_root)} uses absolute sibling import: {alias.name}")
         return errors
 
     def _targeted_repair_files(

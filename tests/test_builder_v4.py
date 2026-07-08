@@ -214,6 +214,53 @@ def test_builder_v4_repeated_build_does_not_nest_or_duplicate(tmp_path: Path) ->
     assert len(list(root.rglob("main.py"))) == 1
 
 
+def test_builder_v4_repairs_absolute_sibling_imports(tmp_path: Path) -> None:
+    response = """===FILE:README.md===
+# App
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/helper.py===
+def value() -> str:
+    return "ok"
+
+===FILE:src/main.py===
+from helper import value
+
+def main(argv=None) -> int:
+    print(value())
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===FILE:tests/test_main.py===
+from src.main import main
+
+def test_main(capsys):
+    assert main([]) == 0
+    assert "ok" in capsys.readouterr().out
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("Import Repair", tmp_path, "ollama", 1)
+    main_py = tmp_path / "import_repair" / "src" / "main.py"
+    assert report.success
+    assert "from .helper import value" in main_py.read_text(encoding="utf-8")
+
+
+def test_builder_v4_repairs_nested_project_root_folder(tmp_path: Path) -> None:
+    root = tmp_path / "applications" / "hello"
+    nested = root / "applications"
+    nested.mkdir(parents=True)
+    (nested / "junk.py").write_text("x = 1\n", encoding="utf-8")
+    report = BuilderV4(AlwaysBadLLM()).build("HELLO", tmp_path / "applications", "ollama", 1)
+    assert report.success
+    assert not nested.exists()
+
+
 def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> None:
     class FakeClient:
         def generate(self, prompt: str) -> str:
