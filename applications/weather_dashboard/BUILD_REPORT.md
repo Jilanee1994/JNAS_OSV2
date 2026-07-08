@@ -4,7 +4,7 @@
 - Milestone: `1`
 - Project root: `applications\weather_dashboard`
 - Final status: SUCCESS
-- Execution time: 5.29s
+- Execution time: 4.22s
 
 ## Generated Files
 - `C:\JNAS\VM2\JNAS_OSV2-main\applications\weather_dashboard\README.md`
@@ -30,7 +30,7 @@ PASS
 
 ```text
 ..                                                                       [100%]
-2 passed in 0.07s
+2 passed in 0.04s
 ```
 
 ## Runtime Result

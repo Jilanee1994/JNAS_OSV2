@@ -34,6 +34,14 @@ class GeneratedFile:
     content: str
 
 
+@dataclass(frozen=True)
+class DependencyIssue:
+    """Undeclared third-party dependency detected in a generated file."""
+
+    path: Path
+    package: str
+
+
 @dataclass
 class BuilderV4Report:
     """Build report for Builder V4."""
@@ -238,7 +246,7 @@ class BuilderV4:
         for attempt in range(self.retry_limit + 1):
             preflight_errors = self._preflight_validate(project_root)
             if preflight_errors:
-                self._repair_preflight(project_name, project_root, preflight_errors, report)
+                self._repair_preflight(project_name, milestone, project_root, preflight_errors, report)
                 report.retry_result = f"preflight-repair-{attempt + 1}"
                 if attempt >= self.retry_limit:
                     report.errors.extend(preflight_errors)
@@ -384,6 +392,37 @@ class BuilderV4:
             f"{errors}\n"
         )
 
+    def _dependency_repair_prompt(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        issues: list[DependencyIssue],
+    ) -> str:
+        issue_text = "\n".join(
+            f"- {issue.path.as_posix()} imports undeclared dependency {issue.package}" for issue in issues
+        )
+        file_blocks = "\n\n".join(
+            (
+                f"===CURRENT_FILE:{path.as_posix()}===\n"
+                f"{(project_root / path).read_text(encoding='utf-8')}"
+            )
+            for path in sorted({issue.path for issue in issues}, key=lambda item: item.as_posix())
+        )
+        return (
+            "Repair ONLY the listed files to remove undeclared third-party imports when possible.\n"
+            "Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.\n"
+            "No markdown. No explanations. No prose. No code fences.\n"
+            "Do not add new files. Do not regenerate the whole project.\n"
+            "If the dependency is truly required, return the same corrected file content.\n\n"
+            f"Project name: {project_name}\n"
+            f"Milestone: {milestone}\n\n"
+            "Undeclared dependency issues:\n"
+            f"{issue_text}\n\n"
+            "Current files:\n"
+            f"{file_blocks}\n"
+        )
+
     def _write_files(self, project_root: Path, files: list[GeneratedFile], report: BuilderV4Report) -> None:
         seen: set[Path] = set()
         for generated in files:
@@ -468,13 +507,54 @@ class BuilderV4:
         errors.extend(self._dependency_quality_errors(project_root))
         return errors
 
-    def _repair_preflight(self, project_name: str, project_root: Path, errors: list[str], report: BuilderV4Report) -> None:
-        _ = errors
+    def _repair_preflight(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        errors: list[str],
+        report: BuilderV4Report,
+    ) -> None:
+        dependency_issues = self._dependency_issues(project_root)
+        if dependency_issues and len(dependency_issues) == len(errors):
+            self._repair_dependency_issues(project_name, milestone, project_root, dependency_issues, report)
+            return
         self._remove_stale_root_python(project_root)
         self._remove_stale_tests(project_root)
         self._remove_nested_project_roots(project_root)
         files = self._fallback_files(project_name)
         self._write_files(project_root, files, report)
+
+    def _repair_dependency_issues(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        issues: list[DependencyIssue],
+        report: BuilderV4Report,
+    ) -> None:
+        target_paths = {issue.path for issue in issues}
+        try:
+            response = self.llm_client.generate(
+                self._dependency_repair_prompt(project_name, milestone, project_root, issues)
+            )
+            files = [
+                item
+                for item in self.parser.parse(response)
+                if self._normalize_generated_path(project_root, item.path) in target_paths
+            ]
+            if files:
+                self._write_files(project_root, files, report)
+        except Exception as exc:
+            self.logger.warning("Dependency repair generation failed; using targeted fallback files: %s", exc)
+            self._write_files(project_root, self._fallback_files_for_paths(project_name, target_paths), report)
+        remaining = [issue for issue in self._dependency_issues(project_root) if issue.path in target_paths]
+        if remaining:
+            self._add_requirements(project_root, {issue.package for issue in remaining})
+
+    def _fallback_files_for_paths(self, project_name: str, target_paths: set[Path]) -> list[GeneratedFile]:
+        by_path = {item.path: item for item in self._fallback_files(project_name)}
+        return [by_path[path] for path in sorted(target_paths, key=lambda item: item.as_posix()) if path in by_path]
 
     def _remove_stale_root_python(self, project_root: Path) -> None:
         for path in project_root.glob("*.py"):
@@ -604,9 +684,15 @@ class BuilderV4:
         return errors
 
     def _dependency_quality_errors(self, project_root: Path) -> list[str]:
+        return [
+            f"{issue.path} imports undeclared third-party dependency: {issue.package}"
+            for issue in self._dependency_issues(project_root)
+        ]
+
+    def _dependency_issues(self, project_root: Path) -> list[DependencyIssue]:
         requirements = self._declared_requirements(project_root)
         local_modules = self._local_module_names(project_root)
-        errors: list[str] = []
+        issues: list[DependencyIssue] = []
         for path in project_root.rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
@@ -615,10 +701,19 @@ class BuilderV4:
                     continue
                 package_name = self._IMPORT_PACKAGE_MAP.get(module_name, module_name)
                 if package_name.lower() not in requirements:
-                    errors.append(
-                        f"{path.relative_to(project_root)} imports undeclared third-party dependency: {package_name}"
-                    )
-        return errors
+                    issues.append(DependencyIssue(path.relative_to(project_root), package_name))
+        return issues
+
+    def _add_requirements(self, project_root: Path, packages: set[str]) -> None:
+        requirements_path = project_root / "requirements.txt"
+        existing_text = requirements_path.read_text(encoding="utf-8") if requirements_path.exists() else ""
+        existing = self._declared_requirements(project_root)
+        additions = sorted(package for package in packages if package.lower() not in existing)
+        if not additions:
+            return
+        lines = existing_text.splitlines()
+        lines.extend(additions)
+        requirements_path.write_text("\n".join(line for line in lines if line.strip()) + "\n", encoding="utf-8")
 
     def _declared_requirements(self, project_root: Path) -> set[str]:
         requirements_path = project_root / "requirements.txt"
