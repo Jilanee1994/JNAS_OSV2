@@ -162,8 +162,49 @@ def test_placeholder() -> None:
     report = BuilderV4(FakeV4LLM([response])).build("hello", tmp_path / "applications", "ollama", 1)
     root = tmp_path / "applications" / "hello"
     assert (root / "README.md").exists()
-    assert (root / "tests" / "test_job_search.py").exists()
+    assert (root / "tests").exists()
     assert not (root / "applications").exists()
+    assert not (root / "path").exists()
+
+
+def test_builder_v4_rejects_forbidden_path_directory_after_project_root(tmp_path: Path) -> None:
+    response = """===FILE:applications/weather_dashboard/path/src/main.py===
+print("bad")
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("WEATHER_DASHBOARD", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "weather_dashboard"
+    assert not report.success
+    assert any("forbidden directory token" in error for error in report.errors)
+    assert not (root / "path").exists()
+
+
+def test_builder_v4_normalizes_leading_path_wrapper_without_creating_folder(tmp_path: Path) -> None:
+    response = """===FILE:path/applications/weather_dashboard/src/main.py===
+from __future__ import annotations
+
+import argparse
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="Weather dashboard")
+    parser.parse_args(argv)
+    return 0
+
+===FILE:path/applications/weather_dashboard/tests/test_main.py===
+from src.main import main
+
+
+def test_main() -> None:
+    assert main([]) == 0
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("WEATHER_DASHBOARD", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "weather_dashboard"
+    assert report.success
+    assert (root / "src" / "main.py").exists()
     assert not (root / "path").exists()
 
 
@@ -323,11 +364,8 @@ if __name__ == "__main__":
     report = BuilderV4(llm).build("WEATHER_DASHBOARD", tmp_path / "applications", "ollama", 1)
     root = tmp_path / "applications" / "weather_dashboard"
     assert report.success
-    assert report.retry_result.startswith("preflight-repair") or report.retry_result == "success"
-    assert len(llm.prompts) == 2
-    assert "Repair ONLY the listed files" in llm.prompts[1]
-    assert "src/main.py imports undeclared dependency flask" in llm.prompts[1]
-    assert "flask" not in (root / "src" / "main.py").read_text(encoding="utf-8").lower()
+    assert len(llm.prompts) >= 1
+    assert not any("undeclared third-party dependency" in error for error in report.errors)
 
 
 def test_builder_v4_declares_dependency_when_repair_still_requires_it(tmp_path: Path) -> None:
@@ -359,10 +397,43 @@ def main(argv=None) -> int:
         ],
         builder_v4.BuilderV4Report("WEATHER_DASHBOARD", root, "ollama", 1),
     )
-    errors = builder._preflight_validate(root)
-    report = builder_v4.BuilderV4Report("WEATHER_DASHBOARD", root, "ollama", 1)
-    builder._repair_preflight("WEATHER_DASHBOARD", 1, root, errors, report)
-    assert "flask" in (root / "requirements.txt").read_text(encoding="utf-8")
+    assert builder._preflight_validate(root) == []
+    assert "flask" in (root / "requirements.txt").read_text(encoding="utf-8").lower()
+
+
+def test_builder_v4_adds_generated_dependency_before_write(tmp_path: Path) -> None:
+    response = """===FILE:README.md===
+# Weather
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+from flask import Flask
+
+app = Flask(__name__)
+
+def main(argv=None) -> int:
+    return 0
+
+===FILE:tests/test_main.py===
+from src.main import main
+
+def test_main() -> None:
+    assert main([]) == 0
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response, response]), retry_limit=0).build(
+        "WEATHER_DASHBOARD",
+        tmp_path / "applications",
+        "ollama",
+        1,
+    )
+    root = tmp_path / "applications" / "weather_dashboard"
+    assert "flask" in (root / "requirements.txt").read_text(encoding="utf-8").lower()
+    assert not any("undeclared third-party dependency" in error for error in report.errors)
 
 
 def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> None:

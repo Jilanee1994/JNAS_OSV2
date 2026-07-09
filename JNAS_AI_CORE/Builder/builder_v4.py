@@ -183,10 +183,12 @@ class FileResponseParser:
 class BuilderV4:
     """Autonomous project builder using direct Ollama API and file blocks."""
 
+    _FORBIDDEN_PATH_PARTS = {"path", "filepath", "relative", "absolute"}
     _IMPORT_PACKAGE_MAP = {
         "PIL": "Pillow",
         "bs4": "beautifulsoup4",
         "cv2": "opencv-python",
+        "flask": "Flask",
         "sklearn": "scikit-learn",
         "yaml": "PyYAML",
     }
@@ -227,6 +229,7 @@ class BuilderV4:
                 report.retry_result = "llm-fallback"
                 files = self._fallback_files(project_name)
             files = self._complete_required_files(project_name, files)
+            files = self._repair_generated_dependencies(project_name, milestone, project_root, files)
             self._write_files(project_root, files, report)
             self._validate_until_success(project_name, milestone, project_root, report)
         except Exception as exc:
@@ -423,10 +426,78 @@ class BuilderV4:
             f"{file_blocks}\n"
         )
 
+    def _generated_dependency_repair_prompt(
+        self,
+        project_name: str,
+        milestone: int,
+        files: list[GeneratedFile],
+        issues: list[DependencyIssue],
+    ) -> str:
+        issue_text = "\n".join(
+            f"- {issue.path.as_posix()} imports undeclared dependency {issue.package}" for issue in issues
+        )
+        by_path = {item.path: item for item in files}
+        file_blocks = "\n\n".join(
+            f"===CURRENT_FILE:{path.as_posix()}===\n{by_path[path].content}"
+            for path in sorted({issue.path for issue in issues}, key=lambda item: item.as_posix())
+            if path in by_path
+        )
+        return (
+            "Repair ONLY the listed generated files before writing them to disk.\n"
+            "Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.\n"
+            "No markdown. No explanations. No prose. No code fences.\n"
+            "Do not add new files. Do not regenerate the whole project.\n"
+            "Prefer standard-library code over third-party dependencies when possible.\n"
+            "If the dependency is truly required, return the same corrected file content.\n\n"
+            f"Project name: {project_name}\n"
+            f"Milestone: {milestone}\n\n"
+            "Undeclared dependency issues:\n"
+            f"{issue_text}\n\n"
+            "Current generated files:\n"
+            f"{file_blocks}\n"
+        )
+
+    def _repair_generated_dependencies(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        files: list[GeneratedFile],
+    ) -> list[GeneratedFile]:
+        normalized = self._normalize_generated_files(project_root, files)
+        issues = self._generated_dependency_issues(normalized)
+        if not issues:
+            return normalized
+        target_paths = {issue.path for issue in issues}
+        by_path = {item.path: item for item in normalized}
+        try:
+            response = self.llm_client.generate(
+                self._generated_dependency_repair_prompt(project_name, milestone, normalized, issues)
+            )
+            repairs = [
+                GeneratedFile(self._normalize_generated_path(project_root, item.path), item.content)
+                for item in self.parser.parse(response)
+            ]
+            for repair in repairs:
+                if repair.path in target_paths:
+                    by_path[repair.path] = repair
+        except Exception as exc:
+            self.logger.warning("Pre-write dependency repair failed; declaring dependencies: %s", exc)
+        return self._declare_generated_dependencies(list(by_path.values()))
+
+    def _normalize_generated_files(self, project_root: Path, files: list[GeneratedFile]) -> list[GeneratedFile]:
+        by_path: dict[Path, GeneratedFile] = {}
+        for item in files:
+            normalized = self._normalize_generated_path(project_root, item.path)
+            by_path.setdefault(normalized, GeneratedFile(normalized, item.content))
+        return list(by_path.values())
+
     def _write_files(self, project_root: Path, files: list[GeneratedFile], report: BuilderV4Report) -> None:
         seen: set[Path] = set()
-        for generated in files:
-            normalized = self._normalize_generated_path(project_root, generated.path)
+        normalized_files = self._normalize_generated_files(project_root, files)
+        normalized_files = self._declare_generated_dependencies(normalized_files)
+        for generated in normalized_files:
+            normalized = generated.path
             if normalized in seen:
                 raise ValueError(f"Duplicate generated file path: {normalized}")
             seen.add(normalized)
@@ -446,23 +517,43 @@ class BuilderV4:
         parts = [part for part in candidate.parts if part not in {"", "."}]
         if any(part == ".." for part in parts):
             raise ValueError(f"Generated path escapes project root: {generated_path}")
+        parts = self._strip_path_wrappers(project_root, parts)
         root_parts = list(project_root.parts)
         for index in range(len(parts)):
             suffix = parts[index:]
             if len(suffix) >= len(root_parts) and self._parts_equal(suffix[: len(root_parts)], root_parts):
-                return Path(*suffix[len(root_parts) :])
+                return self._validate_relative_path(Path(*suffix[len(root_parts) :]), generated_path)
         root_name = project_root.name
         for index, part in enumerate(parts):
             if part == root_name and index + 1 < len(parts):
-                return Path(*parts[index + 1 :])
+                return self._validate_relative_path(Path(*parts[index + 1 :]), generated_path)
         if parts and parts[0] in {"path", "applications", "workspace"} and root_name in parts:
             root_index = parts.index(root_name)
             if root_index + 1 < len(parts):
-                return Path(*parts[root_index + 1 :])
+                return self._validate_relative_path(Path(*parts[root_index + 1 :]), generated_path)
         normalized = Path(*parts)
         if normalized.parts and normalized.parts[0] == project_root.name:
-            return Path(*normalized.parts[1:])
-        return normalized
+            return self._validate_relative_path(Path(*normalized.parts[1:]), generated_path)
+        return self._validate_relative_path(normalized, generated_path)
+
+    def _strip_path_wrappers(self, project_root: Path, parts: list[str]) -> list[str]:
+        lowered = [part.lower() for part in parts]
+        root_name = project_root.name.lower()
+        if root_name in lowered:
+            root_index = lowered.index(root_name)
+            return parts[root_index + 1 :]
+        while parts and parts[0].lower() in self._FORBIDDEN_PATH_PARTS:
+            parts = parts[1:]
+        return parts
+
+    def _validate_relative_path(self, relative_path: Path, original_path: Path) -> Path:
+        if not relative_path.parts:
+            raise ValueError(f"Generated file path is invalid: {original_path}")
+        if any(part.lower() in self._FORBIDDEN_PATH_PARTS for part in relative_path.parts[:-1]):
+            raise ValueError(f"Generated path contains forbidden directory token: {original_path}")
+        if relative_path.is_absolute() or any(part == ".." for part in relative_path.parts):
+            raise ValueError(f"Generated path escapes project root: {original_path}")
+        return relative_path
 
     def _parts_equal(self, left: list[str], right: list[str]) -> bool:
         return [part.lower() for part in left] == [part.lower() for part in right]
@@ -921,6 +1012,68 @@ class BuilderV4:
         if root != target and root not in target.parents:
             raise ValueError(f"Generated path escapes project root: {relative_path}")
         return target
+
+    def _declare_generated_dependencies(self, files: list[GeneratedFile]) -> list[GeneratedFile]:
+        issues = self._generated_dependency_issues(files)
+        if not issues:
+            return files
+        required_packages = {issue.package for issue in issues}
+        by_path = {item.path: item for item in files}
+        requirements = by_path.get(Path("requirements.txt"), GeneratedFile(Path("requirements.txt"), "\n"))
+        declared = self._declared_requirements_from_text(requirements.content)
+        additions = sorted(package for package in required_packages if package.lower() not in declared)
+        if not additions:
+            return files
+        lines = [line for line in requirements.content.splitlines() if line.strip()]
+        lines.extend(additions)
+        by_path[Path("requirements.txt")] = GeneratedFile(Path("requirements.txt"), "\n".join(lines) + "\n")
+        return list(by_path.values())
+
+    def _generated_dependency_issues(self, files: list[GeneratedFile]) -> list[DependencyIssue]:
+        by_path = {item.path: item for item in files}
+        requirements = self._declared_requirements_from_text(by_path.get(Path("requirements.txt"), GeneratedFile(Path("requirements.txt"), "")).content)
+        local_modules = self._generated_local_module_names(files)
+        issues: list[DependencyIssue] = []
+        for item in files:
+            if item.path.suffix != ".py" or "__pycache__" in item.path.parts:
+                continue
+            for module_name in self._imported_roots_from_text(item.content):
+                if self._is_allowed_import(module_name, local_modules):
+                    continue
+                package_name = self._IMPORT_PACKAGE_MAP.get(module_name, module_name)
+                if package_name.lower() not in requirements:
+                    issues.append(DependencyIssue(item.path, package_name))
+        return issues
+
+    def _generated_local_module_names(self, files: list[GeneratedFile]) -> set[str]:
+        names = {"src"}
+        names.update(item.path.stem for item in files if item.path.parent == Path(".") and item.path.suffix == ".py")
+        names.update(item.path.stem for item in files if item.path.parent.as_posix() in {"src", "tests"} and item.path.suffix == ".py")
+        return names
+
+    def _declared_requirements_from_text(self, content: str) -> set[str]:
+        requirements: set[str] = set()
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+                continue
+            name = re.split(r"[<>=!~\[]", stripped, maxsplit=1)[0].strip()
+            if name:
+                requirements.add(name.lower())
+        return requirements
+
+    def _imported_roots_from_text(self, content: str) -> set[str]:
+        try:
+            tree = ast.parse(content)
+        except (SyntaxError, IndentationError):
+            return set()
+        roots: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                roots.add(node.module.split(".", 1)[0])
+        return roots
 
     def _slugify(self, value: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
