@@ -7,6 +7,7 @@ import ast
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -218,26 +219,69 @@ class BuilderV4:
         """Build a project from CLI arguments."""
         started = time.perf_counter()
         project_root = output_directory / self._slugify(project_name)
-        project_root.mkdir(parents=True, exist_ok=True)
+        tmp_root = output_directory / ".builder_tmp" / self._slugify(project_name)
+        self._remove_directory(tmp_root)
+        tmp_root.mkdir(parents=True, exist_ok=True)
         report = BuilderV4Report(project_name, project_root, provider, milestone)
+        stage_report = BuilderV4Report(project_name, tmp_root, provider, milestone)
         try:
             try:
                 response = self.llm_client.generate(self._build_prompt(project_name, milestone))
-                files = self._parse_with_retry(project_name, milestone, response, report)
+                files = self._parse_with_retry(project_name, milestone, response, stage_report)
             except Exception as exc:
                 self.logger.warning("LLM generation failed; using deterministic recovery template: %s", exc)
-                report.retry_result = "llm-fallback"
+                stage_report.retry_result = "llm-fallback"
                 files = self._fallback_files(project_name)
             files = self._complete_required_files(project_name, files)
-            files = self._repair_generated_dependencies(project_name, milestone, project_root, files)
-            self._write_files(project_root, files, report)
-            self._validate_until_success(project_name, milestone, project_root, report)
+            files = self._repair_generated_dependencies(project_name, milestone, tmp_root, files)
+            self._write_files(tmp_root, files, stage_report)
+            self._validate_until_success(project_name, milestone, tmp_root, stage_report)
+            self._copy_stage_report(stage_report, report, tmp_root, project_root)
+            if stage_report.success:
+                self._replace_project(tmp_root, project_root)
         except Exception as exc:
             report.errors.append(str(exc))
             self.logger.exception("Builder V4 failed.")
         report.duration = time.perf_counter() - started
-        write_text_file(project_root / "BUILD_REPORT.md", report.to_markdown())
+        if report.success:
+            write_text_file(project_root / "BUILD_REPORT.md", report.to_markdown())
+        else:
+            write_text_file(tmp_root / "BUILD_REPORT.md", report.to_markdown())
         return report
+
+    def _copy_stage_report(
+        self,
+        stage_report: BuilderV4Report,
+        report: BuilderV4Report,
+        tmp_root: Path,
+        project_root: Path,
+    ) -> None:
+        tmp_absolute = tmp_root.resolve()
+        project_absolute = project_root.resolve()
+        report.generated_files = [
+            project_absolute / path.relative_to(tmp_absolute)
+            for path in stage_report.generated_files
+            if path.is_relative_to(tmp_absolute)
+        ]
+        report.compile_result = stage_report.compile_result
+        report.test_result = stage_report.test_result
+        report.runtime_result = stage_report.runtime_result
+        report.retry_result = stage_report.retry_result
+        report.errors = list(stage_report.errors)
+        report.duration = stage_report.duration
+
+    def _replace_project(self, tmp_root: Path, project_root: Path) -> None:
+        project_root.parent.mkdir(parents=True, exist_ok=True)
+        backup_root = project_root.with_name(f".{project_root.name}.builder_backup")
+        self._remove_directory(backup_root)
+        if project_root.exists():
+            project_root.replace(backup_root)
+        tmp_root.replace(project_root)
+        self._remove_directory(backup_root)
+
+    def _remove_directory(self, path: Path) -> None:
+        if path.exists():
+            shutil.rmtree(path)
 
     def _validate_until_success(
         self,
@@ -512,9 +556,9 @@ class BuilderV4:
         if not raw:
             raise ValueError("Generated file path is empty.")
         candidate = Path(raw)
-        if candidate.is_absolute():
-            raise ValueError(f"Generated path escapes project root: {generated_path}")
         parts = [part for part in candidate.parts if part not in {"", "."}]
+        if candidate.is_absolute():
+            parts = self._absolute_project_parts(project_root, parts, generated_path)
         if any(part == ".." for part in parts):
             raise ValueError(f"Generated path escapes project root: {generated_path}")
         parts = self._strip_path_wrappers(project_root, parts)
@@ -545,6 +589,14 @@ class BuilderV4:
         while parts and parts[0].lower() in self._FORBIDDEN_PATH_PARTS:
             parts = parts[1:]
         return parts
+
+    def _absolute_project_parts(self, project_root: Path, parts: list[str], original_path: Path) -> list[str]:
+        root_name = project_root.name.lower()
+        clean_parts = [part for part in parts if part not in {project_root.anchor, "\\", "/"}]
+        lowered = [part.lower() for part in clean_parts]
+        if root_name not in lowered:
+            raise ValueError(f"Generated path escapes project root: {original_path}")
+        return clean_parts
 
     def _validate_relative_path(self, relative_path: Path, original_path: Path) -> Path:
         if not relative_path.parts:
@@ -596,6 +648,7 @@ class BuilderV4:
         errors.extend(self._python_quality_errors(project_root))
         errors.extend(self._import_quality_errors(project_root))
         errors.extend(self._dependency_quality_errors(project_root))
+        errors.extend(self._symbol_consistency_errors(project_root))
         return errors
 
     def _repair_preflight(
@@ -779,6 +832,77 @@ class BuilderV4:
             f"{issue.path} imports undeclared third-party dependency: {issue.package}"
             for issue in self._dependency_issues(project_root)
         ]
+
+    def _symbol_consistency_errors(self, project_root: Path) -> list[str]:
+        errors: list[str] = []
+        for path in project_root.rglob("*.py"):
+            if "__pycache__" in path.parts:
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, IndentationError):
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.level != 0 or not node.module:
+                    continue
+                module_path = self._local_import_module_path(project_root, node.module)
+                if module_path is None:
+                    continue
+                if not module_path.exists():
+                    errors.append(f"{path.relative_to(project_root)} imports missing module: {node.module}")
+                    continue
+                exported = self._exported_symbols(module_path)
+                for alias in node.names:
+                    if alias.name == "*":
+                        continue
+                    if alias.name not in exported:
+                        errors.append(
+                            f"{path.relative_to(project_root)} imports missing symbol: {node.module}.{alias.name}"
+                        )
+        return errors
+
+    def _local_import_module_path(self, project_root: Path, module_name: str) -> Path | None:
+        parts = module_name.split(".")
+        candidates: list[Path] = []
+        if parts[0] == "src":
+            candidates.append(project_root.joinpath(*parts).with_suffix(".py"))
+            candidates.append(project_root.joinpath(*parts) / "__init__.py")
+        elif (project_root / f"{parts[0]}.py").exists():
+            candidates.append(project_root.joinpath(*parts).with_suffix(".py"))
+        else:
+            src_candidate = project_root / "src" / Path(*parts).with_suffix(".py")
+            if src_candidate.exists():
+                candidates.append(src_candidate)
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0] if candidates else None
+
+    def _exported_symbols(self, module_path: Path) -> set[str]:
+        try:
+            tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        except (SyntaxError, IndentationError):
+            return set()
+        symbols: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                symbols.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    symbols.update(self._assigned_names(target))
+            elif isinstance(node, ast.AnnAssign):
+                symbols.update(self._assigned_names(node.target))
+        return symbols
+
+    def _assigned_names(self, node: ast.AST) -> set[str]:
+        if isinstance(node, ast.Name):
+            return {node.id}
+        if isinstance(node, (ast.Tuple, ast.List)):
+            names: set[str] = set()
+            for item in node.elts:
+                names.update(self._assigned_names(item))
+            return names
+        return set()
 
     def _dependency_issues(self, project_root: Path) -> list[DependencyIssue]:
         requirements = self._declared_requirements(project_root)

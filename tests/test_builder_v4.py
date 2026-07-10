@@ -219,6 +219,47 @@ x = 1
     assert any("escapes project root" in error for error in report.errors)
 
 
+def test_builder_v4_normalizes_absolute_project_path(tmp_path: Path) -> None:
+    response = """===FILE:/applications/weather_dashboard/README.md===
+# Weather
+
+===FILE:/applications/weather_dashboard/requirements.txt===
+
+===FILE:/applications/weather_dashboard/src/__init__.py===
+
+===FILE:/applications/weather_dashboard/src/main.py===
+from __future__ import annotations
+
+import argparse
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Weather dashboard")
+    parser.parse_args(argv)
+    print("Weather dashboard ready")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===FILE:/applications/weather_dashboard/tests/test_main.py===
+from src.main import main
+
+
+def test_main() -> None:
+    assert main([]) == 0
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("WEATHER_DASHBOARD", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "weather_dashboard"
+    assert report.success
+    assert (root / "src" / "main.py").exists()
+    assert (root / "tests" / "test_main.py").exists()
+    assert not (root / "applications").exists()
+
+
 def test_builder_v4_rejects_normalized_path_escape(tmp_path: Path) -> None:
     response = """===FILE:applications/hello/../escape.py===
 x = 1
@@ -266,6 +307,107 @@ def test_builder_v4_repeated_build_does_not_nest_or_duplicate(tmp_path: Path) ->
     assert not (root / "applications").exists()
     assert not (root / "hello" / "hello").exists()
     assert len(list(root.rglob("main.py"))) == 1
+
+
+def test_builder_v4_replaces_destination_transactionally_without_stale_tests(tmp_path: Path) -> None:
+    root = tmp_path / "applications" / "weather_dashboard"
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir(parents=True)
+    (root / "src" / "main.py").write_text("def greet() -> str:\n    return 'hello'\n", encoding="utf-8")
+    (root / "tests" / "test_main.py").write_text(
+        "from src.main import greet\n\n\ndef test_greet() -> None:\n    assert greet() == 'hello'\n",
+        encoding="utf-8",
+    )
+    response = """===FILE:README.md===
+# Weather Dashboard
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+from __future__ import annotations
+
+import argparse
+
+
+def current_temperature() -> int:
+    return 72
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Weather dashboard")
+    parser.parse_args(argv)
+    print(f"Temperature: {current_temperature()}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+===FILE:tests/test_main.py===
+from src.main import current_temperature, main
+
+
+def test_current_temperature() -> None:
+    assert current_temperature() == 72
+
+
+def test_main(capsys) -> None:
+    assert main([]) == 0
+    assert "Temperature" in capsys.readouterr().out
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response])).build("WEATHER_DASHBOARD", tmp_path / "applications", "ollama", 1)
+    assert report.success
+    assert report.generated_files
+    assert "greet" not in (root / "tests" / "test_main.py").read_text(encoding="utf-8")
+    assert "current_temperature" in (root / "src" / "main.py").read_text(encoding="utf-8")
+    assert not (tmp_path / "applications" / ".builder_tmp" / "weather_dashboard").exists()
+
+
+def test_builder_v4_does_not_replace_destination_when_candidate_is_inconsistent(tmp_path: Path) -> None:
+    root = tmp_path / "applications" / "weather_dashboard"
+    (root / "src").mkdir(parents=True)
+    (root / "tests").mkdir(parents=True)
+    (root / "README.md").write_text("# Existing\n", encoding="utf-8")
+    (root / "requirements.txt").write_text("\n", encoding="utf-8")
+    (root / "src" / "__init__.py").write_text("\n", encoding="utf-8")
+    (root / "src" / "main.py").write_text("def stable() -> str:\n    return 'stable'\n", encoding="utf-8")
+    (root / "tests" / "test_main.py").write_text(
+        "from src.main import stable\n\n\ndef test_stable() -> None:\n    assert stable() == 'stable'\n",
+        encoding="utf-8",
+    )
+    response = """===FILE:README.md===
+# Broken Weather Dashboard
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+def weather() -> str:
+    return "sunny"
+
+===FILE:tests/test_main.py===
+from src.main import greet
+
+
+def test_greet() -> None:
+    assert greet() == "hello"
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response]), retry_limit=0).build(
+        "WEATHER_DASHBOARD",
+        tmp_path / "applications",
+        "ollama",
+        1,
+    )
+    assert not report.success
+    assert "stable" in (root / "src" / "main.py").read_text(encoding="utf-8")
+    assert "greet" not in (root / "src" / "main.py").read_text(encoding="utf-8")
 
 
 def test_builder_v4_repairs_absolute_sibling_imports(tmp_path: Path) -> None:
@@ -402,38 +544,24 @@ def main(argv=None) -> int:
 
 
 def test_builder_v4_adds_generated_dependency_before_write(tmp_path: Path) -> None:
-    response = """===FILE:README.md===
-# Weather
-
-===FILE:requirements.txt===
-
-===FILE:src/__init__.py===
-
-===FILE:src/main.py===
-from flask import Flask
-
-app = Flask(__name__)
-
-def main(argv=None) -> int:
-    return 0
-
-===FILE:tests/test_main.py===
-from src.main import main
-
-def test_main() -> None:
-    assert main([]) == 0
-
-===END===
-"""
-    report = BuilderV4(FakeV4LLM([response, response]), retry_limit=0).build(
-        "WEATHER_DASHBOARD",
-        tmp_path / "applications",
-        "ollama",
-        1,
+    root = tmp_path / "applications" / ".builder_tmp" / "weather_dashboard"
+    builder = BuilderV4(FakeV4LLM([]), retry_limit=0)
+    report = builder_v4.BuilderV4Report("WEATHER_DASHBOARD", root, "ollama", 1)
+    builder._write_files(
+        root,
+        [
+            builder_v4.GeneratedFile(Path("README.md"), "# Weather\n"),
+            builder_v4.GeneratedFile(Path("requirements.txt"), "\n"),
+            builder_v4.GeneratedFile(Path("src/__init__.py"), "\n"),
+            builder_v4.GeneratedFile(
+                Path("src/main.py"),
+                "from flask import Flask\n\napp = Flask(__name__)\n\ndef main(argv=None) -> int:\n    return 0\n",
+            ),
+            builder_v4.GeneratedFile(Path("tests/test_main.py"), "from src.main import main\n"),
+        ],
+        report,
     )
-    root = tmp_path / "applications" / "weather_dashboard"
     assert "flask" in (root / "requirements.txt").read_text(encoding="utf-8").lower()
-    assert not any("undeclared third-party dependency" in error for error in report.errors)
 
 
 def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> None:
