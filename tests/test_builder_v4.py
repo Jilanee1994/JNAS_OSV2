@@ -45,6 +45,58 @@ def test_greet() -> None:
 """
 
 
+def weather_response() -> str:
+    return """===FILE:README.md===
+# WEATHER_DASHBOARD
+
+Weather dashboard for city forecasts and temperatures.
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+from __future__ import annotations
+
+import argparse
+
+
+def get_forecast(city: str) -> dict[str, object]:
+    return {"city": city, "temperature": 72, "condition": "Clear"}
+
+
+def format_forecast(city: str) -> str:
+    forecast = get_forecast(city)
+    return f"Weather dashboard forecast for {forecast['city']}: {forecast['temperature']}F"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Weather dashboard CLI")
+    parser.add_argument("--city", default="London")
+    args = parser.parse_args(argv)
+    print(format_forecast(args.city))
+    return 0
+
+===FILE:tests/test_main.py===
+from src.main import format_forecast, get_forecast, main
+
+
+def test_get_forecast_temperature() -> None:
+    assert get_forecast("London")["temperature"] == 72
+
+
+def test_format_forecast_mentions_weather_dashboard() -> None:
+    assert "Weather dashboard" in format_forecast("London")
+
+
+def test_weather_dashboard_cli(capsys) -> None:
+    assert main(["--city", "London"]) == 0
+    assert "forecast" in capsys.readouterr().out
+
+===END===
+"""
+
+
 def broken_response() -> str:
     return """===FILE:hello.py===
 def greet(:
@@ -187,17 +239,27 @@ from __future__ import annotations
 import argparse
 
 
+def get_forecast(city: str) -> dict[str, object]:
+    return {"city": city, "temperature": 72}
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Weather dashboard")
+    parser = argparse.ArgumentParser(description="Weather dashboard CLI")
+    parser.add_argument("--city", default="London")
     parser.parse_args(argv)
+    print("Weather dashboard forecast temperature")
     return 0
 
 ===FILE:path/applications/weather_dashboard/tests/test_main.py===
-from src.main import main
+from src.main import get_forecast, main
 
 
 def test_main() -> None:
     assert main([]) == 0
+
+
+def test_forecast_temperature() -> None:
+    assert get_forecast("London")["temperature"] == 72
 
 ===END===
 """
@@ -221,7 +283,9 @@ x = 1
 
 def test_builder_v4_normalizes_absolute_project_path(tmp_path: Path) -> None:
     response = """===FILE:/applications/weather_dashboard/README.md===
-# Weather
+# Weather Dashboard
+
+City forecast and temperature dashboard.
 
 ===FILE:/applications/weather_dashboard/requirements.txt===
 
@@ -233,10 +297,16 @@ from __future__ import annotations
 import argparse
 
 
+def get_forecast(city: str) -> dict[str, object]:
+    return {"city": city, "temperature": 72}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Weather dashboard")
-    parser.parse_args(argv)
-    print("Weather dashboard ready")
+    parser.add_argument("--city", default="London")
+    args = parser.parse_args(argv)
+    forecast = get_forecast(args.city)
+    print(f"Weather dashboard forecast: {forecast['temperature']}")
     return 0
 
 
@@ -244,11 +314,15 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 ===FILE:/applications/weather_dashboard/tests/test_main.py===
-from src.main import main
+from src.main import get_forecast, main
 
 
 def test_main() -> None:
     assert main([]) == 0
+
+
+def test_forecast_temperature() -> None:
+    assert get_forecast("London")["temperature"] == 72
 
 ===END===
 """
@@ -308,6 +382,104 @@ def test_builder_v4_repeated_build_does_not_nest_or_duplicate(tmp_path: Path) ->
     assert not (root / "hello" / "hello").exists()
     assert len(list(root.rglob("main.py"))) == 1
 
+
+def test_builder_v4_rejects_weather_dashboard_with_hello_semantics(tmp_path: Path) -> None:
+    response = """===FILE:README.md===
+# WEATHER_DASHBOARD
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+from __future__ import annotations
+
+import argparse
+
+
+def greet(name: str = "World") -> str:
+    return f"Hello, {name}!"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Hello application")
+    parser.add_argument("--name", default="World")
+    args = parser.parse_args(argv)
+    print(greet(args.name))
+    return 0
+
+===FILE:tests/test_main.py===
+from src.main import greet, main
+
+
+def test_greet() -> None:
+    assert greet("World") == "Hello, World!"
+
+===END===
+"""
+    report = BuilderV4(FakeV4LLM([response]), retry_limit=0).build(
+        "WEATHER_DASHBOARD",
+        tmp_path / "applications",
+        "ollama",
+        1,
+    )
+    assert not report.success
+    assert any("mismatched project terms" in error for error in report.errors)
+    assert not (tmp_path / "applications" / "weather_dashboard").exists()
+
+
+def test_builder_v4_repairs_weather_dashboard_semantics_with_project_specific_output(tmp_path: Path) -> None:
+    response = """===FILE:README.md===
+# WEATHER_DASHBOARD
+
+===FILE:requirements.txt===
+
+===FILE:src/__init__.py===
+
+===FILE:src/main.py===
+from __future__ import annotations
+
+import argparse
+
+
+def greet(name: str = "World") -> str:
+    return f"Hello, {name}!"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Hello application")
+    parser.add_argument("--name", default="World")
+    args = parser.parse_args(argv)
+    print(greet(args.name))
+    return 0
+
+===FILE:tests/test_main.py===
+from src.main import greet, main
+
+
+def test_greet() -> None:
+    assert greet("World") == "Hello, World!"
+
+===END===
+"""
+    llm = FakeV4LLM([response, weather_response()])
+    report = BuilderV4(llm).build(
+        "WEATHER_DASHBOARD",
+        tmp_path / "applications",
+        "ollama",
+        1,
+    )
+    root = tmp_path / "applications" / "weather_dashboard"
+    assert report.success
+    assert len(llm.prompts) == 2
+    source = (root / "src" / "main.py").read_text(encoding="utf-8").lower()
+    tests = (root / "tests" / "test_main.py").read_text(encoding="utf-8").lower()
+    assert "weather" in source
+    assert "temperature" in source
+    assert "--city" in source
+    assert "greet" not in source
+    assert "hello application" not in source
+    assert "weather" in tests
 
 def test_builder_v4_replaces_destination_transactionally_without_stale_tests(tmp_path: Path) -> None:
     root = tmp_path / "applications" / "weather_dashboard"
@@ -471,6 +643,7 @@ from flask import Flask
 app = Flask(__name__)
 
 def main(argv=None) -> int:
+    print("Weather dashboard forecast temperature")
     return 0
 
 if __name__ == "__main__":
@@ -492,8 +665,9 @@ import argparse
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Weather dashboard")
+    parser.add_argument("--city", default="London")
     parser.parse_args(argv)
-    print("Weather dashboard ready")
+    print("Weather dashboard forecast temperature")
     return 0
 
 
@@ -528,14 +702,25 @@ def main(argv=None) -> int:
     builder._write_files(
         root,
         [
-            builder_v4.GeneratedFile(Path("README.md"), "# Weather\n"),
+            builder_v4.GeneratedFile(Path("README.md"), "# Weather Dashboard\n\nCity forecast and temperature dashboard.\n"),
             builder_v4.GeneratedFile(Path("requirements.txt"), "\n"),
             builder_v4.GeneratedFile(Path("src/__init__.py"), "\n"),
             builder_v4.GeneratedFile(
                 Path("src/main.py"),
-                "from flask import Flask\n\napp = Flask(__name__)\n\ndef main(argv=None) -> int:\n    return 0\n",
+                (
+                    "from flask import Flask\n\n"
+                    "app = Flask(__name__)\n\n"
+                    "def get_temperature(city: str) -> int:\n"
+                    "    return 72\n\n"
+                    "def main(argv=None) -> int:\n"
+                    "    print(f\"Weather dashboard temperature for {city}: {get_temperature('city')}\")\n"
+                    "    return 0\n"
+                ),
             ),
-            builder_v4.GeneratedFile(Path("tests/test_main.py"), "def test_smoke() -> None:\n    assert True\n"),
+            builder_v4.GeneratedFile(
+                Path("tests/test_main.py"),
+                "from src.main import get_temperature\n\n\ndef test_weather_temperature() -> None:\n    assert get_temperature(\"London\") == 72\n",
+            ),
         ],
         builder_v4.BuilderV4Report("WEATHER_DASHBOARD", root, "ollama", 1),
     )
@@ -582,3 +767,4 @@ def test_builder_v4_cli_returns_zero_on_success(tmp_path: Path, monkeypatch) -> 
     ])
     assert exit_code == 0
     assert (tmp_path / "hello" / "BUILD_REPORT.md").exists()
+

@@ -293,11 +293,15 @@ class BuilderV4:
         for attempt in range(self.retry_limit + 1):
             preflight_errors = self._preflight_validate(project_root)
             if preflight_errors:
-                self._repair_preflight(project_name, milestone, project_root, preflight_errors, report)
-                report.retry_result = f"preflight-repair-{attempt + 1}"
                 if attempt >= self.retry_limit:
                     report.errors.extend(preflight_errors)
                     return
+                if self._has_semantic_errors(preflight_errors):
+                    self._repair_semantic_project(project_name, milestone, project_root, preflight_errors, report)
+                    report.retry_result = f"semantic-retry-{attempt + 1}"
+                    continue
+                self._repair_preflight(project_name, milestone, project_root, preflight_errors, report)
+                report.retry_result = f"preflight-repair-{attempt + 1}"
                 continue
 
             self._validate(project_root, report)
@@ -391,6 +395,20 @@ class BuilderV4:
             f"Milestone: {milestone}\n"
         )
 
+    def _semantic_repair_prompt(self, project_name: str, milestone: int, semantic_errors: list[str]) -> str:
+        return (
+            "Your previous project did not match the requested project specification.\n"
+            "Regenerate the COMPLETE project from scratch.\n"
+            "Return ONLY file blocks using ===FILE:path=== and one final ===END===.\n"
+            "No markdown. No explanations. No prose. No code fences.\n"
+            "Do not return Hello application code unless the requested project is HELLO.\n"
+            "For WEATHER_DASHBOARD include weather, forecast, temperature, city, and dashboard concepts.\n"
+            "For JOB_HUNTER include job, search, company, export, and candidate workflow concepts.\n\n"
+            f"Project name: {project_name}\n"
+            f"Milestone: {milestone}\n\n"
+            "Semantic validation errors:\n"
+            f"{chr(10).join(semantic_errors)}\n"
+        )
     def _parser_repair_prompt(self, project_name: str, milestone: int, invalid_response: str, parser_error: str) -> str:
         return (
             "Your previous response was invalid and could not be parsed.\n"
@@ -649,8 +667,39 @@ class BuilderV4:
         errors.extend(self._import_quality_errors(project_root))
         errors.extend(self._dependency_quality_errors(project_root))
         errors.extend(self._symbol_consistency_errors(project_root))
+        errors.extend(self._semantic_consistency_errors(project_root))
         return errors
 
+    def _has_semantic_errors(self, errors: list[str]) -> bool:
+        return any(
+            "missing semantic terms" in error
+            or "missing project intent terms" in error
+            or "mismatched project terms" in error
+            for error in errors
+        )
+
+    def _repair_semantic_project(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        errors: list[str],
+        report: BuilderV4Report,
+    ) -> None:
+        self._clear_directory(project_root)
+        response = self.llm_client.generate(self._semantic_repair_prompt(project_name, milestone, errors))
+        files = self.parser.parse(response)
+        files = self._complete_required_files(project_name, files)
+        files = self._repair_generated_dependencies(project_name, milestone, project_root, files)
+        self._write_files(project_root, files, report)
+
+    def _clear_directory(self, path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        for child in path.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
     def _repair_preflight(
         self,
         project_name: str,
@@ -903,6 +952,64 @@ class BuilderV4:
                 names.update(self._assigned_names(item))
             return names
         return set()
+    def _semantic_consistency_errors(self, project_root: Path) -> list[str]:
+        project_key = project_root.name.lower()
+        text = self._project_text(project_root)
+        if not text.strip():
+            return []
+        if project_key == "weather_dashboard":
+            return self._semantic_errors(
+                project_root,
+                text,
+                required={"weather", "dashboard"},
+                any_required={"forecast", "temperature", "city", "climate", "condition"},
+                forbidden={"hello application", "hello, world", "hello world", "greet(", "def greet", "--name"},
+            )
+        if project_key == "job_hunter":
+            return self._semantic_errors(
+                project_root,
+                text,
+                required={"job"},
+                any_required={"company", "csv", "export", "search", "hunter"},
+                forbidden={"hello application", "hello, world", "hello world", "greet(", "def greet"},
+            )
+        if project_key in {"hello", "hello_world", "hello_project"}:
+            return self._semantic_errors(
+                project_root,
+                text,
+                required={"hello"},
+                any_required={"greet", "world", "name"},
+                forbidden=set(),
+            )
+        return []
+
+    def _semantic_errors(
+        self,
+        project_root: Path,
+        text: str,
+        required: set[str],
+        any_required: set[str],
+        forbidden: set[str],
+    ) -> list[str]:
+        errors: list[str] = []
+        missing = sorted(term for term in required if term not in text)
+        if missing:
+            errors.append(f"{project_root.name} missing semantic terms: {', '.join(missing)}")
+        if any_required and not any(term in text for term in any_required):
+            errors.append(f"{project_root.name} missing project intent terms: {', '.join(sorted(any_required))}")
+        blocked = sorted(term for term in forbidden if term in text)
+        if blocked:
+            errors.append(f"{project_root.name} contains mismatched project terms: {', '.join(blocked)}")
+        return errors
+
+    def _project_text(self, project_root: Path) -> str:
+        chunks: list[str] = []
+        for pattern in ("README.md", "src/**/*.py", "tests/**/*.py"):
+            for path in project_root.glob(pattern):
+                if path.is_file() and "__pycache__" not in path.parts:
+                    chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
+        return "\n".join(chunks).lower()
+
 
     def _dependency_issues(self, project_root: Path) -> list[DependencyIssue]:
         requirements = self._declared_requirements(project_root)
@@ -1013,6 +1120,8 @@ class BuilderV4:
         key = self._slugify(project_name)
         if key == "job_hunter":
             return self._job_hunter_files()
+        if key == "weather_dashboard":
+            return self._weather_dashboard_files()
         return self._hello_files(project_name)
 
     def _hello_files(self, project_name: str) -> list[GeneratedFile]:
@@ -1050,6 +1159,52 @@ class BuilderV4:
             ),
         ]
 
+    def _weather_dashboard_files(self) -> list[GeneratedFile]:
+        return [
+            GeneratedFile(Path("README.md"), "# WEATHER_DASHBOARD\n\nWeather dashboard CLI for city forecasts and temperatures.\n"),
+            GeneratedFile(Path("requirements.txt"), "\n"),
+            GeneratedFile(Path("src/__init__.py"), '"""WEATHER_DASHBOARD application."""\n'),
+            GeneratedFile(
+                Path("src/main.py"),
+                (
+                    "from __future__ import annotations\n\n"
+                    "import argparse\n\n\n"
+                    "FORECASTS = {\n"
+                    "    \"london\": {\"temperature\": 18, \"condition\": \"Cloudy\"},\n"
+                    "    \"mumbai\": {\"temperature\": 31, \"condition\": \"Humid\"},\n"
+                    "    \"new york\": {\"temperature\": 24, \"condition\": \"Clear\"},\n"
+                    "}\n\n\n"
+                    "def get_forecast(city: str) -> dict[str, object]:\n"
+                    "    key = city.strip().lower()\n"
+                    "    return FORECASTS.get(key, {\"temperature\": 22, \"condition\": \"Mild\"})\n\n\n"
+                    "def format_forecast(city: str) -> str:\n"
+                    "    forecast = get_forecast(city)\n"
+                    "    return f\"Weather dashboard for {city}: {forecast['temperature']}C and {forecast['condition']}\"\n\n\n"
+                    "def main(argv: list[str] | None = None) -> int:\n"
+                    "    parser = argparse.ArgumentParser(description=\"Weather dashboard CLI\")\n"
+                    "    parser.add_argument(\"--city\", default=\"London\")\n"
+                    "    args = parser.parse_args(argv)\n"
+                    "    print(format_forecast(args.city))\n"
+                    "    return 0\n\n\n"
+                    "if __name__ == \"__main__\":\n"
+                    "    raise SystemExit(main())\n"
+                ),
+            ),
+            GeneratedFile(
+                Path("tests/test_main.py"),
+                (
+                    "from src.main import format_forecast, get_forecast, main\n\n\n"
+                    "def test_get_forecast_contains_temperature() -> None:\n"
+                    "    forecast = get_forecast(\"London\")\n"
+                    "    assert forecast[\"temperature\"] == 18\n\n\n"
+                    "def test_format_forecast_mentions_weather_dashboard() -> None:\n"
+                    "    assert \"Weather dashboard\" in format_forecast(\"Mumbai\")\n\n\n"
+                    "def test_weather_dashboard_cli_runs(capsys) -> None:\n"
+                    "    assert main([\"--city\", \"London\"]) == 0\n"
+                    "    assert \"Weather dashboard\" in capsys.readouterr().out\n"
+                ),
+            ),
+        ]
     def _job_hunter_files(self) -> list[GeneratedFile]:
         return [
             GeneratedFile(Path("README.md"), "# JOB_HUNTER\n\nCLI job tracking and CSV export tool.\n"),
@@ -1217,3 +1372,5 @@ def main(argv: list[str] | None = None) -> int:
     report = BuilderV4(client).build(args.project, args.output, args.provider, args.milestone)
     print(report.to_markdown())
     return 0 if report.success else 1
+
+
