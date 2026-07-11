@@ -57,6 +57,7 @@ class BuilderV4Report:
     runtime_result: ValidationResult | None = None
     retry_result: str = "not-run"
     errors: list[str] = field(default_factory=list)
+    debug_directory: Path | None = None
     duration: float = 0.0
 
     @property
@@ -81,10 +82,13 @@ class BuilderV4Report:
             f"- Milestone: `{self.milestone}`",
             f"- Project root: `{self.project_root}`",
             f"- Final status: {'SUCCESS' if self.success else 'FAILED'}",
-            f"- Execution time: {self.duration:.2f}s",
-            "",
-            "## Generated Files",
         ]
+        if self.debug_directory:
+            lines.append(f"- Debug directory: `{self.debug_directory}`")
+
+        lines.append(f"- Execution time: {self.duration:.2f}s")
+        lines.append("")
+        lines.append("## Generated Files")
         lines.extend(f"- `{path}`" for path in self.generated_files) if self.generated_files else lines.append("- None")
         lines.extend(["", "## Compile Result", self._validation_text(self.compile_result)])
         lines.extend(["", "## Test Result", self._validation_text(self.test_result)])
@@ -132,8 +136,11 @@ class DirectOllamaClient:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with request.urlopen(req, timeout=self.timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            raise ConnectionError(f"Ollama API request failed: {exc}") from exc
         content = self._extract_content(body)
         self._write_debug("logs/ollama_response.txt", content)
         return content
@@ -145,6 +152,7 @@ class DirectOllamaClient:
         return str(body.get("response", ""))
 
     def _write_debug(self, path: str, content: str) -> None:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         write_text_file(Path(path), content)
 
 
@@ -157,7 +165,9 @@ class FileResponseParser:
     def parse(self, response: str) -> list[GeneratedFile]:
         """Parse generated files from a marker-based response."""
         raw = response.strip()
-        write_text_file(Path("logs") / "ollama_response.txt", response)
+        log_path = Path("logs") / "ollama_response.txt"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_file(log_path, response)
         end_match = self._END_PATTERN.search(raw)
         if end_match is None:
             raise ValueError("Parser error: missing terminal ===END=== marker.")
@@ -261,14 +271,20 @@ class BuilderV4:
             self._copy_stage_report(stage_report, report, tmp_root, project_root)
             if stage_report.success:
                 self._replace_project(tmp_root, project_root)
+            else:
+                report.debug_directory = self._preserve_failed_build(tmp_root, output_directory, project_name)
+                if report.debug_directory:
+                    report.errors.append(f"Debug artifacts available at: {report.debug_directory}")
+
         except Exception as exc:
             report.errors.append(str(exc))
             self.logger.exception("Builder V4 failed.")
         report.duration = time.perf_counter() - started
-        if report.success:
-            write_text_file(project_root / "BUILD_REPORT.md", report.to_markdown())
-        else:
-            write_text_file(tmp_root / "BUILD_REPORT.md", report.to_markdown())
+
+        report_dir = project_root if report.success else tmp_root
+        report_dir.mkdir(parents=True, exist_ok=True)
+        write_text_file(report_dir / "BUILD_REPORT.md", report.to_markdown())
+
         return report
 
     def _copy_stage_report(
@@ -441,6 +457,7 @@ class BuilderV4:
             "Semantic validation errors:\n"
             f"{chr(10).join(semantic_errors)}\n"
         )
+
     def _parser_repair_prompt(self, project_name: str, milestone: int, invalid_response: str, parser_error: str) -> str:
         specification = self._project_specification(project_name)
         return (
@@ -738,6 +755,7 @@ class BuilderV4:
                 shutil.rmtree(child)
             else:
                 child.unlink()
+
     def _repair_preflight(
         self,
         project_name: str,
@@ -878,9 +896,22 @@ class BuilderV4:
             for module_name in module_names:
                 if path.stem == module_name:
                     continue
+                # Repair 'from sibling import name' -> 'from .sibling import name'
                 updated = re.sub(
                     rf"(^\s*from\s+){re.escape(module_name)}(\s+import\s+)",
                     rf"\1.{module_name}\2",
+                    updated,
+                    flags=re.MULTILINE,
+                )
+                # Repair 'import sibling [as alias]' -> 'from . import sibling [as alias]'
+                def replace_import(match: re.Match) -> str:
+                    indent = match.group(1)
+                    alias = match.group(2) or ""
+                    return f"{indent}from . import {module_name}{alias}"
+
+                updated = re.sub(
+                    rf"(^\s*)import\s+{re.escape(module_name)}(\s+as\s+\w+)?\b",
+                    replace_import,
                     updated,
                     flags=re.MULTILINE,
                 )
@@ -990,6 +1021,7 @@ class BuilderV4:
                 names.update(self._assigned_names(item))
             return names
         return set()
+
     def _semantic_consistency_errors(self, project_root: Path) -> list[str]:
         project_key = project_root.name.lower()
         text = self._project_text(project_root)
@@ -1070,7 +1102,6 @@ class BuilderV4:
                     chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
         return "\n".join(chunks).lower()
 
-
     def _dependency_issues(self, project_root: Path) -> list[DependencyIssue]:
         requirements = self._declared_requirements(project_root)
         local_modules = self._local_module_names(project_root)
@@ -1101,15 +1132,7 @@ class BuilderV4:
         requirements_path = project_root / "requirements.txt"
         if not requirements_path.exists():
             return set()
-        requirements: set[str] = set()
-        for line in requirements_path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or stripped.startswith("-"):
-                continue
-            name = re.split(r"[<>=!~\[]", stripped, maxsplit=1)[0].strip()
-            if name:
-                requirements.add(name.lower())
-        return requirements
+        return self._declared_requirements_from_text(requirements_path.read_text(encoding="utf-8"))
 
     def _local_module_names(self, project_root: Path) -> set[str]:
         names = {"src"}
@@ -1454,10 +1477,11 @@ class BuilderV4:
     def _declared_requirements_from_text(self, content: str) -> set[str]:
         requirements: set[str] = set()
         for line in content.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+            # Remove inline comments starting with '#'
+            clean_line = line.split("#", 1)[0].strip()
+            if not clean_line or clean_line.startswith("-"):
                 continue
-            name = re.split(r"[<>=!~\[]", stripped, maxsplit=1)[0].strip()
+            name = re.split(r"[<>=!~\[]", clean_line, maxsplit=1)[0].strip()
             if name:
                 requirements.add(name.lower())
         return requirements
@@ -1479,6 +1503,20 @@ class BuilderV4:
         slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
         return slug or "jnas_project"
 
+    def _preserve_failed_build(self, tmp_root: Path, output_directory: Path, project_name: str) -> Path | None:
+        """Preserve the temporary build directory when validation fails and return the path."""
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        debug_dir = output_directory / "debug" / "failed_builds" / f"{timestamp}_{self._slugify(project_name)}"
+        try:
+            if tmp_root.exists():
+                debug_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(tmp_root, debug_dir)
+                self.logger.info("Failed build preserved for debugging at: %s", debug_dir)
+                return debug_dir
+        except Exception as exc:
+            self.logger.warning("Failed to preserve build artifacts: %s", exc)
+        return None
+
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for Builder V4."""
@@ -1493,5 +1531,3 @@ def main(argv: list[str] | None = None) -> int:
     report = BuilderV4(client).build(args.project, args.output, args.provider, args.milestone)
     print(report.to_markdown())
     return 0 if report.success else 1
-
-
