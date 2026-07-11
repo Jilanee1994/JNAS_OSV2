@@ -185,6 +185,28 @@ class BuilderV4:
     """Autonomous project builder using direct Ollama API and file blocks."""
 
     _FORBIDDEN_PATH_PARTS = {"path", "filepath", "relative", "absolute"}
+    _PROJECT_SPECIFICATIONS = {
+        "hello": (
+            "Build a small command-line greeting application. It must accept a name, "
+            "print a greeting, and include matching tests."
+        ),
+        "weather_dashboard": (
+            "Build a weather dashboard application. It must accept a city, provide a "
+            "weather forecast with temperature and conditions, present the result in a "
+            "dashboard-style command-line interface, and include matching tests."
+        ),
+        "job_hunter": (
+            "Build a job-hunting application. It must support searching or filtering job "
+            "records, use company and candidate details, export results, provide a command-line "
+            "interface, and include matching tests."
+        ),
+        "build_agent": (
+            "Build an orchestration agent for generating projects. It must accept a project goal, "
+            "create an execution plan, invoke a builder step, read or produce a build report, "
+            "handle failed steps with a retry path, provide a command-line interface, and include "
+            "matching tests."
+        ),
+    }
     _IMPORT_PACKAGE_MAP = {
         "PIL": "Pillow",
         "bs4": "beautifulsoup4",
@@ -348,6 +370,7 @@ class BuilderV4:
                 return self._fallback_files(project_name)
 
     def _build_prompt(self, project_name: str, milestone: int) -> str:
+        specification = self._project_specification(project_name)
         return (
             "You are JNAS Builder Agent V4.\n"
             "Generate a complete Python project.\n"
@@ -370,12 +393,6 @@ class BuilderV4:
             "===FILE:src/main.py===\n"
             "<python code>\n"
             "\n"
-            "===FILE:src/job_search.py===\n"
-            "<python code>\n"
-            "\n"
-            "===FILE:tests/test_job_search.py===\n"
-            "<python code>\n"
-            "\n"
             "===FILE:BUILD_REPORT.md===\n"
             "<markdown>\n"
             "\n"
@@ -390,26 +407,42 @@ class BuilderV4:
             "- src/__init__.py\n"
             "- src/main.py\n"
             "- tests/test_*.py\n"
-            "The application must start with: python -m src.main --help\n\n"
+            "The application must start with: python -m src.main --help\n"
+            "Do not generate a Hello application unless the requested project is HELLO.\n\n"
+            "Project specification:\n"
+            f"{specification}\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n"
         )
 
+    def _project_specification(self, project_name: str) -> str:
+        key = self._slugify(project_name)
+        return self._PROJECT_SPECIFICATIONS.get(
+            key,
+            (
+                f"Build an application that matches the requested project name: {project_name}. "
+                "Define its core domain behavior, expose it through a command-line interface, "
+                "and include tests for that behavior. Do not substitute a generic Hello application."
+            ),
+        )
+
     def _semantic_repair_prompt(self, project_name: str, milestone: int, semantic_errors: list[str]) -> str:
+        specification = self._project_specification(project_name)
         return (
             "Your previous project did not match the requested project specification.\n"
             "Regenerate the COMPLETE project from scratch.\n"
             "Return ONLY file blocks using ===FILE:path=== and one final ===END===.\n"
             "No markdown. No explanations. No prose. No code fences.\n"
-            "Do not return Hello application code unless the requested project is HELLO.\n"
-            "For WEATHER_DASHBOARD include weather, forecast, temperature, city, and dashboard concepts.\n"
-            "For JOB_HUNTER include job, search, company, export, and candidate workflow concepts.\n\n"
+            "Do not return Hello application code unless the requested project is HELLO.\n\n"
+            "Project specification:\n"
+            f"{specification}\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n\n"
             "Semantic validation errors:\n"
             f"{chr(10).join(semantic_errors)}\n"
         )
     def _parser_repair_prompt(self, project_name: str, milestone: int, invalid_response: str, parser_error: str) -> str:
+        specification = self._project_specification(project_name)
         return (
             "Your previous response was invalid and could not be parsed.\n"
             "Output ONLY valid file blocks.\n"
@@ -427,6 +460,8 @@ class BuilderV4:
             "===FILE:tests/test_main.py===\n"
             "<python test code>\n\n"
             "===END===\n\n"
+            "Project specification:\n"
+            f"{specification}\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n"
             f"Parser error: {parser_error}\n\n"
@@ -435,6 +470,7 @@ class BuilderV4:
         )
 
     def _repair_prompt(self, project_name: str, milestone: int, report: BuilderV4Report, failure_type: str) -> str:
+        specification = self._project_specification(project_name)
         errors = "\n".join(
             part
             for part in (
@@ -451,6 +487,8 @@ class BuilderV4:
             "For compile failures, repair source files only.\n"
             "For pytest failures, repair only failing implementation or test files.\n"
             "For runtime failures, repair src/main.py or broken imports only.\n\n"
+            "Project specification:\n"
+            f"{specification}\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n\n"
             "Validation errors:\n"
@@ -973,6 +1011,14 @@ class BuilderV4:
                 any_required={"company", "csv", "export", "search", "hunter"},
                 forbidden={"hello application", "hello, world", "hello world", "greet(", "def greet"},
             )
+        if project_key == "build_agent":
+            return self._semantic_errors(
+                project_root,
+                text,
+                required={"build", "agent"},
+                any_required={"goal", "plan", "report", "retry", "orchestrat"},
+                forbidden={"hello application", "hello, world", "hello world", "greet(", "def greet"},
+            )
         if project_key in {"hello", "hello_world", "hello_project"}:
             return self._semantic_errors(
                 project_root,
@@ -1122,6 +1168,8 @@ class BuilderV4:
             return self._job_hunter_files()
         if key == "weather_dashboard":
             return self._weather_dashboard_files()
+        if key == "build_agent":
+            return self._build_agent_files()
         return self._hello_files(project_name)
 
     def _hello_files(self, project_name: str) -> list[GeneratedFile]:
@@ -1205,6 +1253,65 @@ class BuilderV4:
                 ),
             ),
         ]
+
+    def _build_agent_files(self) -> list[GeneratedFile]:
+        return [
+            GeneratedFile(
+                Path("README.md"),
+                "# BUILD_AGENT\n\nCommand-line project build orchestration agent with planning and retry support.\n",
+            ),
+            GeneratedFile(Path("requirements.txt"), "\n"),
+            GeneratedFile(Path("src/__init__.py"), '"""BUILD_AGENT application."""\n'),
+            GeneratedFile(
+                Path("src/main.py"),
+                (
+                    "from __future__ import annotations\n\n"
+                    "import argparse\n"
+                    "from dataclasses import dataclass\n\n\n"
+                    "@dataclass(frozen=True)\n"
+                    "class BuildReport:\n"
+                    "    goal: str\n"
+                    "    plan: tuple[str, ...]\n"
+                    "    status: str\n"
+                    "    attempts: int\n\n\n"
+                    "def create_plan(goal: str) -> tuple[str, ...]:\n"
+                    "    return (\"analyze goal\", \"generate project\", \"validate build report\")\n\n\n"
+                    "def run_build(goal: str, retry_limit: int = 1) -> BuildReport:\n"
+                    "    plan = create_plan(goal)\n"
+                    "    attempts = 1\n"
+                    "    if not goal.strip() and retry_limit > 0:\n"
+                    "        attempts += 1\n"
+                    "        return BuildReport(goal, plan, \"retry-required\", attempts)\n"
+                    "    return BuildReport(goal, plan, \"success\", attempts)\n\n\n"
+                    "def main(argv: list[str] | None = None) -> int:\n"
+                    "    parser = argparse.ArgumentParser(description=\"BUILD_AGENT orchestration CLI\")\n"
+                    "    parser.add_argument(\"--goal\", default=\"Build a Python project\")\n"
+                    "    parser.add_argument(\"--retries\", type=int, default=1)\n"
+                    "    args = parser.parse_args(argv)\n"
+                    "    report = run_build(args.goal, args.retries)\n"
+                    "    print(f\"Build agent report: {report.status}; plan: {', '.join(report.plan)}\")\n"
+                    "    return 0 if report.status == \"success\" else 1\n\n\n"
+                    "if __name__ == \"__main__\":\n"
+                    "    raise SystemExit(main())\n"
+                ),
+            ),
+            GeneratedFile(
+                Path("tests/test_main.py"),
+                (
+                    "from src.main import create_plan, main, run_build\n\n\n"
+                    "def test_build_agent_creates_plan() -> None:\n"
+                    "    assert \"generate project\" in create_plan(\"Build a scraper\")\n\n\n"
+                    "def test_build_agent_returns_successful_report() -> None:\n"
+                    "    report = run_build(\"Build a scraper\")\n"
+                    "    assert report.status == \"success\"\n"
+                    "    assert report.attempts == 1\n\n\n"
+                    "def test_build_agent_cli_runs(capsys) -> None:\n"
+                    "    assert main([\"--goal\", \"Build a scraper\"]) == 0\n"
+                    "    assert \"Build agent report\" in capsys.readouterr().out\n"
+                ),
+            ),
+        ]
+
     def _job_hunter_files(self) -> list[GeneratedFile]:
         return [
             GeneratedFile(Path("README.md"), "# JOB_HUNTER\n\nCLI job tracking and CSV export tool.\n"),

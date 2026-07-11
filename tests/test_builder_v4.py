@@ -372,6 +372,25 @@ def test_builder_v4_acceptance_job_hunter_from_bad_llm(tmp_path: Path) -> None:
     assert report.runtime_result is not None and report.runtime_result.success
 
 
+def test_builder_v4_prompt_includes_build_agent_specification() -> None:
+    prompt = BuilderV4(FakeV4LLM([]))._build_prompt("BUILD_AGENT", 1)
+
+    assert "Project specification:" in prompt
+    assert "orchestration agent" in prompt
+    assert "create an execution plan" in prompt
+    assert "src/job_search.py" not in prompt
+
+
+def test_builder_v4_acceptance_build_agent_from_bad_llm(tmp_path: Path) -> None:
+    report = BuilderV4(AlwaysBadLLM()).build("BUILD_AGENT", tmp_path / "applications", "ollama", 1)
+    root = tmp_path / "applications" / "build_agent"
+
+    assert report.success
+    assert (root / "src" / "main.py").exists()
+    assert "Build agent report" in (root / "src" / "main.py").read_text(encoding="utf-8")
+    assert report.runtime_result is not None and report.runtime_result.success
+
+
 def test_builder_v4_repeated_build_does_not_nest_or_duplicate(tmp_path: Path) -> None:
     builder = BuilderV4(AlwaysBadLLM())
     first = builder.build("HELLO", tmp_path / "applications", "ollama", 1)
