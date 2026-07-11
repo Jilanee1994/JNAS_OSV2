@@ -57,6 +57,7 @@ class BuilderV4Report:
     runtime_result: ValidationResult | None = None
     retry_result: str = "not-run"
     errors: list[str] = field(default_factory=list)
+    debug_directory: Path | None = None
     duration: float = 0.0
 
     @property
@@ -81,10 +82,13 @@ class BuilderV4Report:
             f"- Milestone: `{self.milestone}`",
             f"- Project root: `{self.project_root}`",
             f"- Final status: {'SUCCESS' if self.success else 'FAILED'}",
-            f"- Execution time: {self.duration:.2f}s",
-            "",
-            "## Generated Files",
         ]
+        if self.debug_directory:
+            lines.append(f"- Debug directory: `{self.debug_directory}`")
+
+        lines.append(f"- Execution time: {self.duration:.2f}s")
+        lines.append("")
+        lines.append("## Generated Files")
         lines.extend(f"- `{path}`" for path in self.generated_files) if self.generated_files else lines.append("- None")
         lines.extend(["", "## Compile Result", self._validation_text(self.compile_result)])
         lines.extend(["", "## Test Result", self._validation_text(self.test_result)])
@@ -261,14 +265,20 @@ class BuilderV4:
             self._copy_stage_report(stage_report, report, tmp_root, project_root)
             if stage_report.success:
                 self._replace_project(tmp_root, project_root)
+            else:
+                report.debug_directory = self._preserve_failed_build(tmp_root, output_directory, project_name)
+                if report.debug_directory:
+                    report.errors.append(f"Debug artifacts available at: {report.debug_directory}")
+
         except Exception as exc:
             report.errors.append(str(exc))
             self.logger.exception("Builder V4 failed.")
         report.duration = time.perf_counter() - started
-        if report.success:
-            write_text_file(project_root / "BUILD_REPORT.md", report.to_markdown())
-        else:
-            write_text_file(tmp_root / "BUILD_REPORT.md", report.to_markdown())
+
+        report_dir = project_root if report.success else tmp_root
+        report_dir.mkdir(parents=True, exist_ok=True)
+        write_text_file(report_dir / "BUILD_REPORT.md", report.to_markdown())
+
         return report
 
     def _copy_stage_report(
@@ -1479,6 +1489,20 @@ class BuilderV4:
         slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.lower()).strip("_")
         return slug or "jnas_project"
 
+    def _preserve_failed_build(self, tmp_root: Path, output_directory: Path, project_name: str) -> Path | None:
+        """Preserve the temporary build directory when validation fails and return the path."""
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        debug_dir = output_directory / "debug" / "failed_builds" / f"{timestamp}_{self._slugify(project_name)}"
+        try:
+            if tmp_root.exists():
+                debug_dir.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(tmp_root, debug_dir)
+                self.logger.info("Failed build preserved for debugging at: %s", debug_dir)
+                return debug_dir
+        except Exception as exc:
+            self.logger.warning("Failed to preserve build artifacts: %s", exc)
+        return None
+
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint for Builder V4."""
@@ -1493,5 +1517,3 @@ def main(argv: list[str] | None = None) -> int:
     report = BuilderV4(client).build(args.project, args.output, args.provider, args.milestone)
     print(report.to_markdown())
     return 0 if report.success else 1
-
-
