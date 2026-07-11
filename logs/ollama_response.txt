@@ -1,13 +1,22 @@
 ===FILE:src/job_search.py===
-from requests import get
+import requests
 from bs4 import BeautifulSoup
 
-def get_weather_data():
-    url = "https://www.weather.com/"
-    response = get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
+def get_weather_data(location):
+    url = f"https://www.weather.com/weather/today/{location.lower().replace(' ', '')}"
+    response = requests.get(url)
     
-    weather_data = soup.find('div', {'class': 'CurrentConditions--phraseValue--2xXS0'}).text
-    return f"Weather: {weather_data}"
+    if response.status_code != 200:
+        return None
+    
+    soup = BeautifulSoup(response.text, 'lxml')
+    try:
+        current_temp = soup.find("span", {"data-testid": "TemperatureValue"}).text
+        condition = soup.find("div", {"class": "CurrentConditions--tempValue--3a50n"}).text.strip()
+        weather_data = f"Current Temperature in {location}: {current_temp}°F, Condition: {condition}"
+    except Exception as e:
+        return None
+    
+    return weather_data
 
 ===END===
