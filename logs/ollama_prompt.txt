@@ -1,26 +1,37 @@
-Repair ONLY the listed files to remove undeclared third-party imports when possible.
-Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.
+Repair the generated project files.
+Return only files that must be replaced using ===FILE:path=== blocks and one final ===END===.
 No markdown. No explanations. No prose. No code fences.
-Do not add new files. Do not regenerate the whole project.
-If the dependency is truly required, return the same corrected file content.
+
+Repair type: pytest
+For compile failures, repair source files only.
+For pytest failures, repair only failing implementation or test files.
+For runtime failures, repair src/main.py or broken imports only.
+
+Project specification:
+Build a weather dashboard application. It must accept a city, provide a weather forecast with temperature and conditions, present the result in a dashboard-style command-line interface, and include matching tests.
 
 Project name: WEATHER_DASHBOARD
 Milestone: 1
 
-Undeclared dependency issues:
-- src/job_search.py imports undeclared dependency requests
-- src/job_search.py imports undeclared dependency beautifulsoup4
-
-Current files:
-===CURRENT_FILE:src/job_search.py===
-import requests
-from bs4 import BeautifulSoup
-
-def get_weather_data():
-    url = "https://www.weather.com/"
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    weather_data = soup.find('div', {'class': 'CurrentConditions--phraseValue--2xXS0'}).text
-    return f"Weather: {weather_data}"
-
+Validation errors:
+Listing 'JNAS_AI_CORE/.builder_tmp/weather_dashboard'...
+Listing 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/src'...
+Compiling 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/src/__init__.py'...
+Compiling 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/src/main.py'...
+Listing 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests'...
+Compiling 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py'...
+==================================== ERRORS ====================================
+_ ERROR collecting JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py _
+ImportError while importing test module '/home/ubuntu/JNAS-os/JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_main.py:8: in <module>
+    from main import get_weather, main
+E   ModuleNotFoundError: No module named 'main'
+=========================== short test summary info ============================
+ERROR tests/test_main.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.12s
