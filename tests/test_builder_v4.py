@@ -381,6 +381,23 @@ def test_builder_v4_prompt_includes_build_agent_specification() -> None:
     assert "src/job_search.py" not in prompt
 
 
+def test_builder_v4_rejects_hello_semantics_for_build_agent(tmp_path: Path) -> None:
+    root = tmp_path / "build_agent"
+    root.mkdir()
+    (root / "README.md").write_text("# BUILD_AGENT\n", encoding="utf-8")
+    source_directory = root / "src"
+    source_directory.mkdir()
+    (source_directory / "main.py").write_text(
+        "def greet(name: str) -> str:\n    return f'Hello, {name}!'\n",
+        encoding="utf-8",
+    )
+
+    errors = BuilderV4(FakeV4LLM([]))._semantic_consistency_errors(root)
+
+    assert any("missing project intent terms" in error for error in errors)
+    assert any("mismatched project terms" in error for error in errors)
+
+
 def test_builder_v4_acceptance_build_agent_from_bad_llm(tmp_path: Path) -> None:
     report = BuilderV4(AlwaysBadLLM()).build("BUILD_AGENT", tmp_path / "applications", "ollama", 1)
     root = tmp_path / "applications" / "build_agent"

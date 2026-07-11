@@ -1016,8 +1016,22 @@ class BuilderV4:
                 project_root,
                 text,
                 required={"build", "agent"},
-                any_required={"goal", "plan", "report", "retry", "orchestrat"},
-                forbidden={"hello application", "hello, world", "hello world", "greet(", "def greet"},
+                any_required={
+                    "planner",
+                    "executor",
+                    "task",
+                    "queue",
+                    "workflow",
+                    "orchestrator",
+                },
+                forbidden={
+                    "hello application",
+                    "hello, world",
+                    "hello world",
+                    "greet(",
+                    "def greet",
+                    "--name",
+                },
             )
         if project_key in {"hello", "hello_world", "hello_project"}:
             return self._semantic_errors(
@@ -1258,7 +1272,7 @@ class BuilderV4:
         return [
             GeneratedFile(
                 Path("README.md"),
-                "# BUILD_AGENT\n\nCommand-line project build orchestration agent with planning and retry support.\n",
+                "# BUILD_AGENT\n\nCommand-line project build-agent workflow with planning and retry support.\n",
             ),
             GeneratedFile(Path("requirements.txt"), "\n"),
             GeneratedFile(Path("src/__init__.py"), '"""BUILD_AGENT application."""\n'),
