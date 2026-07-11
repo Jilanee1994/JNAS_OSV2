@@ -1,1 +1,1 @@
-"""WEATHER_DASHBOARD application."""
+"""Generated application package."""

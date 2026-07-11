@@ -1,4 +1,3 @@
-===FILE:src/job_search.py===
 from requests import get
 from bs4 import BeautifulSoup
 
@@ -9,5 +8,3 @@ def get_weather_data():
     
     weather_data = soup.find('div', {'class': 'CurrentConditions--phraseValue--2xXS0'}).text
     return f"Weather: {weather_data}"
-
-===END===
