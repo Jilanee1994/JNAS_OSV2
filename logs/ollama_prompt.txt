@@ -1,35 +1,51 @@
-Repair the generated project files.
-Return only files that must be replaced using ===FILE:path=== blocks and one final ===END===.
+Repair ONLY the listed generated files before writing them to disk.
+Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.
 No markdown. No explanations. No prose. No code fences.
+Do not add new files. Do not regenerate the whole project.
+Prefer standard-library code over third-party dependencies when possible.
+If the dependency is truly required, return the same corrected file content.
 
-Repair type: pytest
-For compile failures, repair source files only.
-For pytest failures, repair only failing implementation or test files.
-For runtime failures, repair src/main.py or broken imports only.
-
-Project specification:
-Build a weather dashboard application. It must accept a city, provide a weather forecast with temperature and conditions, present the result in a dashboard-style command-line interface, and include matching tests.
-
-Project name: WEATHER_DASHBOARD
+Project name: BUILD_AGENT
 Milestone: 1
 
-Validation errors:
-Listing 'JNAS_AI_CORE/.builder_tmp/weather_dashboard'...
-Listing 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/src'...
-Compiling 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/src/main.py'...
-Listing 'JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests'...
-==================================== ERRORS ====================================
-_ ERROR collecting JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py _
-ImportError while importing test module '/home/ubuntu/JNAS-os/JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py'.
-Hint: make sure your test modules/packages have valid Python names.
-Traceback:
-/usr/lib/python3.12/importlib/__init__.py:90: in import_module
-    return _bootstrap._gcd_import(name[level:], package, level)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-tests/test_main.py:1: in <module>
-    from main import get_weather, main
-E   ModuleNotFoundError: No module named 'main'
-=========================== short test summary info ============================
-ERROR tests/test_main.py
-!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
-1 error in 0.12s
+Undeclared dependency issues:
+- src/main.py imports undeclared dependency click
+
+Current generated files:
+===CURRENT_FILE:src/main.py===
+import click
+from dataclasses import dataclass
+
+@dataclass
+class Task:
+    name: str
+    action: callable
+
+@dataclass
+class Workflow:
+    tasks: list[Task]
+
+def cli():
+    pass
+
+@click.command()
+@click.option('--project-goal', help='The goal of the project')
+@click.option('--plan-execution', is_flag=True, help='Create an execution plan')
+@click.option('--invoke-builder', is_flag=True, help='Invoke a builder step')
+@click.option('--read-report', is_flag=True, help='Read or produce a build report')
+@click.option('--handle-failure', is_flag=True, help='Handle failed steps with a retry path')
+def main(project_goal, plan_execution, invoke_builder, read_report, handle_failure):
+    if project_goal:
+        print(f"Project goal: {project_goal}")
+    if plan_execution:
+        print("Creating execution plan...")
+    if invoke_builder:
+        print("Invoking builder step...")
+    if read_report:
+        print("Reading build report...")
+    if handle_failure:
+        print("Handling failed steps with retry path...")
+
+if __name__ == '__main__':
+    main()
+

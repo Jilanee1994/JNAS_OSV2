@@ -1,1 +1,0 @@
-"""WEATHER_DASHBOARD application."""

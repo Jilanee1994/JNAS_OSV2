@@ -4,7 +4,7 @@
 - Milestone: `1`
 - Project root: `JNAS_AI_CORE/build_agent`
 - Final status: SUCCESS
-- Execution time: 227.75s
+- Execution time: 366.36s
 
 ## Generated Files
 - `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/README.md`
@@ -12,10 +12,7 @@
 - `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/src/main.py`
 - `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/tests/test_main.py`
 - `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/src/__init__.py`
-- `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/build_agent.go`
-- `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/Step.go`
-- `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/BuildContext.go`
-- `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/main.go`
+- `/home/ubuntu/JNAS-os/JNAS_AI_CORE/build_agent/build_agent.py`
 
 ## Compile Result
 PASS

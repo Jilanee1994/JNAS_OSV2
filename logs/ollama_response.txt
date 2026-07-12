@@ -1,34 +1,37 @@
-===FILE:JNAS_AI_CORE/.builder_tmp/weather_dashboard/src/main.py===
-from weather_api import get_weather
+===FILE:src/main.py===
+import dataclasses
 
-def main(city):
-    weather_data = get_weather(city)
-    print(f"Temperature in {city}: {weather_data['temperature']}°C")
-    print(f"Conditions: {weather_data['conditions']}")
-    
-if __name__ == "__main__":
-    import sys
-    city = sys.argv[1]
-    main(city)
+@dataclass
+class Task:
+    name: str
+    action: callable
 
-===FILE:JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py===
-from main import get_weather, main
+@dataclass
+class Workflow:
+    tasks: list[Task]
 
-def test_get_weather():
-    weather_data = get_weather("London")
-    assert weather_data["temperature"] == 15
-    assert weather_data["conditions"] == "Sunny"
+def cli():
+    pass
 
-def test_main():
-    import io
-    import sys
-    from unittest.mock import patch
-    
-    expected_output = "Temperature in London: 15°C\nConditions: Sunny\n"
-    
-    with patch("sys.argv", ["main.py", "London"]), \
-         patch('sys.stdout', new_callable=io.StringIO) as stdout:
-        main("London")
-        
-    assert stdout.getvalue() == expected_output
+@click.command()
+@click.option('--project-goal', help='The goal of the project')
+@click.option('--plan-execution', is_flag=True, help='Create an execution plan')
+@click.option('--invoke-builder', is_flag=True, help='Invoke a builder step')
+@click.option('--read-report', is_flag=True, help='Read or produce a build report')
+@click.option('--handle-failure', is_flag=True, help='Handle failed steps with a retry path')
+def main(project_goal, plan_execution, invoke_builder, read_report, handle_failure):
+    if project_goal:
+        print(f"Project goal: {project_goal}")
+    if plan_execution:
+        print("Creating execution plan...")
+    if invoke_builder:
+        print("Invoking builder step...")
+    if read_report:
+        print("Reading build report...")
+    if handle_failure:
+        print("Handling failed steps with retry path...")
+
+if __name__ == '__main__':
+    main()
+
 ===END===
