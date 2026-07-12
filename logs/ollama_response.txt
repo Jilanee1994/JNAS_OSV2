@@ -1,37 +1,94 @@
+===FILE:README.md===
+EXECUTOR Execution Engine
+
+This project implements an execution engine for running tasks from a planner.
+
+Usage:
+
+```
+python -m src.main --goal "Execute plan"
+```
+
+===FILE:requirements.txt===
+click
+
+===FILE:src/__init__.py==="
+
 ===FILE:src/main.py===
-import dataclasses
+```python
+import click
+from .execution_engine import Executor, ExecutionTask, ExecutionResult
 
-@dataclass
-class Task:
-    name: str
-    action: callable
-
-@dataclass
-class Workflow:
-    tasks: list[Task]
-
-def cli():
-    pass
 
 @click.command()
-@click.option('--project-goal', help='The goal of the project')
-@click.option('--plan-execution', is_flag=True, help='Create an execution plan')
-@click.option('--invoke-builder', is_flag=True, help='Invoke a builder step')
-@click.option('--read-report', is_flag=True, help='Read or produce a build report')
-@click.option('--handle-failure', is_flag=True, help='Handle failed steps with a retry path')
-def main(project_goal, plan_execution, invoke_builder, read_report, handle_failure):
-    if project_goal:
-        print(f"Project goal: {project_goal}")
-    if plan_execution:
-        print("Creating execution plan...")
-    if invoke_builder:
-        print("Invoking builder step...")
-    if read_report:
-        print("Reading build report...")
-    if handle_failure:
-        print("Handling failed steps with retry path...")
+@click.argument('goal')
+def main(goal):
+    executor = Executor()
+    result = executor.execute_plan(goal)
+    print(f"Execution Result: {result}")
+```
 
-if __name__ == '__main__':
-    main()
+===FILE:src/execution_engine.py===
+```python
+class ExecutionTask:
+    def __init__(self, task_id, action, dependencies=[]):
+        self.task_id = task_id
+        self.action = action
+        self.dependencies = dependencies
+
+    def execute(self):
+        raise NotImplementedError("Subclasses must implement this method")
+
+
+class Executor:
+    def __init__(self):
+        self.tasks = []
+        self.results = {}
+
+    def add_task(self, task: ExecutionTask):
+        self.tasks.append(task)
+
+    def _check_dependencies(self, task_id):
+        for task in self.tasks:
+            if task.task_id == task_id and any(dep not in self.results for dep in task.dependencies):
+                return False
+        return True
+
+    def execute_plan(self, goal):
+        self._execute_tasks(goal)
+        report = {task.task_id: result for task, result in zip(self.tasks, self.results.values())}
+        return ExecutionResult(report)
+
+    def _execute_tasks(self, goal):
+        while self.tasks:
+            available_tasks = [t for t in self.tasks if self._check_dependencies(t.task_id) and (t.action == goal or not goal)]
+            if not available_tasks:
+                break
+            next_task = min(available_tasks, key=lambda x: len(x.dependencies))
+            result = next_task.execute()
+            self.results[next_task.task_id] = result
+            self.tasks.remove(next_task)
+```
+
+===FILE:tests/test_main.py===
+```python
+from src.main import Executor, ExecutionTask, ExecutionResult
+
+
+def test_execute_plan():
+    task1 = ExecutionTask(task_id="t1", action="task1")
+    task2 = ExecutionTask(task_id="t2", action="task2", dependencies=["t1"])
+    task3 = ExecutionTask(task_id="t3", action="task3", dependencies=["t1", "t2"])
+
+    executor = Executor()
+    executor.add_task(task1)
+    executor.add_task(task2)
+    executor.add_task(task3)
+
+    result = executor.execute_plan("task3")
+    assert isinstance(result, ExecutionResult)
+    expected_report = {"t1": True, "t2": True, "t3": True}
+    assert result.report == expected_report
+```
 
 ===END===
