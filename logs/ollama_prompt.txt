@@ -1,51 +1,147 @@
-Repair ONLY the listed generated files before writing them to disk.
-Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.
-No markdown. No explanations. No prose. No code fences.
-Do not add new files. Do not regenerate the whole project.
-Prefer standard-library code over third-party dependencies when possible.
-If the dependency is truly required, return the same corrected file content.
+You are JNAS Builder Agent V4.
+Generate a complete Python project.
+Never ask for confirmation.
+IMPORTANT
+You MUST return ONLY file blocks.
+Do NOT write explanations.
+Do NOT use markdown code fences.
+Do NOT write any text before the first file.
+Do NOT write any text after the last file.
 
-Project name: BUILD_AGENT
+Return every file EXACTLY like this, with one final ===END=== only:
+
+===FILE:README.md===
+<content>
+
+===FILE:requirements.txt===
+<content>
+
+===FILE:src/main.py===
+<python code>
+
+===FILE:BUILD_REPORT.md===
+<markdown>
+
+===END===
+The only valid tokens outside file content are ===FILE:path=== and the final ===END===.
+Include tests when appropriate.
+Do not output TODO, placeholder code, fake imports, pass-only implementations, or explanations.
+Generated tests must match generated implementation.
+
+Required project structure:
+- README.md
+- requirements.txt
+- src/__init__.py
+- src/main.py
+- tests/test_*.py
+The application must start with: python -m src.main --help
+Do not generate a Hello application unless the requested project is HELLO.
+
+Project specification:
+# KNOWLEDGE_GRAPH Specification
+
+IMPORTANT
+
+Do NOT generate a Hello application.
+
+Do NOT generate greet().
+
+Do NOT generate --name.
+
+Do NOT generate placeholder code.
+
+Do NOT generate NotImplementedError.
+
+Return ONLY valid Python code.
+
+## Goal
+
+Build a Knowledge Graph engine for JNAS AI Core.
+
+The project manages entities and relationships inside an enterprise knowledge graph.
+
+Language: Python
+
+Project Structure
+
+README.md
+requirements.txt
+
+src/
+    __init__.py
+    main.py
+    graph.py
+    entity.py
+    relationship.py
+
+tests/
+    test_main.py
+
+Required Classes
+
+KnowledgeGraph
+Entity
+Relationship
+
+Required Functions
+
+add_entity()
+remove_entity()
+add_relationship()
+find_entity()
+find_relationships()
+main(argv=None)
+
+CLI
+
+python main.py --entity Robot
+
+Tests MUST import
+
+from src.main import (
+    KnowledgeGraph,
+    Entity,
+    Relationship,
+)
+
+Requirements
+
+- Store entities
+- Store relationships
+- Search entities
+- Search relationships
+- Prevent duplicate entities
+- Prevent duplicate relationships
+- Export graph summary
+- Command-line interface
+- Complete unit tests
+
+Never
+
+- Hello application
+- TODO
+- FIXME
+- XXX
+- Placeholder comments
+- Replace with actual...
+- Example implementation
+- Dummy implementation
+- NotImplementedError
+- pass statements
+- Markdown
+- Code fences
+- Java
+- Go
+- Rust
+- JavaScript
+- TypeScript
+- PHP
+- Swift
+
+The implementation and tests MUST use the same API.
+
+Return production-quality Python code only.
+
+
+Project name: KNOWLEDGE_GRAPH
 Milestone: 1
-
-Undeclared dependency issues:
-- src/main.py imports undeclared dependency click
-
-Current generated files:
-===CURRENT_FILE:src/main.py===
-import click
-from dataclasses import dataclass
-
-@dataclass
-class Task:
-    name: str
-    action: callable
-
-@dataclass
-class Workflow:
-    tasks: list[Task]
-
-def cli():
-    pass
-
-@click.command()
-@click.option('--project-goal', help='The goal of the project')
-@click.option('--plan-execution', is_flag=True, help='Create an execution plan')
-@click.option('--invoke-builder', is_flag=True, help='Invoke a builder step')
-@click.option('--read-report', is_flag=True, help='Read or produce a build report')
-@click.option('--handle-failure', is_flag=True, help='Handle failed steps with a retry path')
-def main(project_goal, plan_execution, invoke_builder, read_report, handle_failure):
-    if project_goal:
-        print(f"Project goal: {project_goal}")
-    if plan_execution:
-        print("Creating execution plan...")
-    if invoke_builder:
-        print("Invoking builder step...")
-    if read_report:
-        print("Reading build report...")
-    if handle_failure:
-        print("Handling failed steps with retry path...")
-
-if __name__ == '__main__':
-    main()
-
