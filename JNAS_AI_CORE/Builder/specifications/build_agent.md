@@ -1,5 +1,11 @@
 # BUILD_AGENT Specification
 
+
+Build an orchestration agent for generating projects.
+
+The agent must create an execution plan, invoke a builder step, produce a build report, handle retries, and provide a command-line interface.
+
+
 Language: Python
 
 Project Structure:
