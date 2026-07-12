@@ -925,7 +925,7 @@ class BuilderV4:
 
     def _python_quality_errors(self, project_root: Path) -> list[str]:
         errors: list[str] = []
-        bad_patterns = ("TODO", "FIXME", "your_module", "placeholder", "NotImplementedError")
+        bad_patterns = ("TODO","FIXME","XXX","your_module","placeholder","NotImplementedError", "Replace with actual" ,"Replace with","Example task","Example tasks","Example implementation","Dummy implementation","stub","pass",)
         for path in project_root.rglob("*.py"):
             if "__pycache__" in path.parts:
                 continue
@@ -1262,15 +1262,37 @@ class BuilderV4:
     def _fallback_source_files(self, project_name: str) -> list[GeneratedFile]:
         return [item for item in self._fallback_files(project_name) if item.path.as_posix().startswith("src/")]
 
+
     def _fallback_files(self, project_name: str) -> list[GeneratedFile]:
         key = self._slugify(project_name)
-        if key == "job_hunter":
-            return self._job_hunter_files()
-        if key == "weather_dashboard":
-            return self._weather_dashboard_files()
-        if key == "build_agent":
-            return self._build_agent_files()
-        return self._hello_files(project_name)
+
+        fallback_builders = {
+        "hello": self._hello_files,
+        "job_hunter": self._job_hunter_files,
+        "weather_dashboard": self._weather_dashboard_files,
+        "build_agent": self._build_agent_files,
+        "planner": self._planner_files,
+        "executor": self._executor_files,
+        "knowledge_graph": self._knowledge_graph_files,
+        }
+
+        builder = fallback_builders.get(key)
+        if builder is None:
+            return self._hello_files(project_name)
+
+        if key == "hello":
+            return builder(project_name)
+
+        return builder()
+
+
+
+
+
+
+
+
+
 
     def _hello_files(self, project_name: str) -> list[GeneratedFile]:
         return [
