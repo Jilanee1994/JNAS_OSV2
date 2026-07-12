@@ -606,6 +606,39 @@ class BuilderV4:
             f"{file_blocks}\n"
         )
 
+    def _preflight_repair_prompt(
+        self,
+        project_name: str,
+        milestone: int,
+        project_root: Path,
+        errors: list[str],
+    ) -> str:
+        error_text = "\n".join(f"- {error}" for error in errors)
+
+        file_blocks = "\n\n".join(
+            (
+                f"===CURRENT_FILE:{path.relative_to(project_root).as_posix()}===\n"
+                f"{path.read_text(encoding='utf-8')}"
+            )
+            for path in sorted(project_root.rglob("*.py"))
+            if "__pycache__" not in path.parts
+        )
+
+        return (
+            "Repair ONLY the listed generated files before writing them to disk.\n"
+            "Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.\n"
+            "No markdown. No explanations. No prose. No code fences.\n"
+            "Do not add new files. Do not regenerate the whole project.\n"
+            "Fix ONLY the reported validation problems.\n\n"
+            f"Project name: {project_name}\n"
+            f"Milestone: {milestone}\n\n"
+            "Validation errors:\n"
+            f"{error_text}\n\n"
+            "Current generated files:\n"
+            f"{file_blocks}\n"
+        )
+
+
     def _generated_dependency_repair_prompt(
         self,
         project_name: str,
@@ -829,13 +862,39 @@ class BuilderV4:
     ) -> None:
         dependency_issues = self._dependency_issues(project_root)
         if dependency_issues and len(dependency_issues) == len(errors):
-            self._repair_dependency_issues(project_name, milestone, project_root, dependency_issues, report)
+            self._repair_dependency_issues(
+                project_name,
+                milestone,
+                project_root,
+                dependency_issues,
+                report,
+            )
             return
+
         self._remove_stale_root_python(project_root)
         self._remove_stale_tests(project_root)
         self._remove_nested_project_roots(project_root)
-        files = self._fallback_files(project_name)
-        self._write_files(project_root, files, report)
+
+        try:
+            response = self.llm_client.generate(
+                self._preflight_repair_prompt(
+                    project_name,
+                    milestone,
+                    project_root,
+                    errors,
+                )
+            )
+
+            files = self.parser.parse(response)
+            self._write_files(project_root, files, report)
+
+        except Exception as exc:
+            self.logger.warning(
+                "Preflight repair generation failed; using fallback files: %s",
+                exc,
+            )
+            files = self._fallback_files(project_name)
+            self._write_files(project_root, files, report)
 
     def _repair_dependency_issues(
         self,
