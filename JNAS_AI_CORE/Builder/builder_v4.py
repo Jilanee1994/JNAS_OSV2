@@ -1267,16 +1267,17 @@ class BuilderV4:
         key = self._slugify(project_name)
 
         fallback_builders = {
-        "hello": self._hello_files,
-        "job_hunter": self._job_hunter_files,
-        "weather_dashboard": self._weather_dashboard_files,
-        "build_agent": self._build_agent_files,
-        "planner": self._planner_files,
-        "executor": self._executor_files,
-        "knowledge_graph": self._knowledge_graph_files,
+            "hello": self._hello_files,
+            "job_hunter": self._job_hunter_files,
+            "weather_dashboard": self._weather_dashboard_files,
+            "build_agent": self._build_agent_files,
+            "planner": self._planner_files,
+            "executor": self._executor_files,
+            "knowledge_graph": self._knowledge_graph_files,
         }
 
         builder = fallback_builders.get(key)
+
         if builder is None:
             return self._hello_files(project_name)
 
