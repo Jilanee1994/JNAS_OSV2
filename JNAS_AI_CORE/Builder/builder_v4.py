@@ -487,7 +487,6 @@ class BuilderV4:
         )
 
     def _repair_prompt(self, project_name: str, milestone: int, report: BuilderV4Report, failure_type: str) -> str:
-        specification = self._project_specification(project_name)
         errors = "\n".join(
             part
             for part in (
@@ -496,16 +495,68 @@ class BuilderV4:
             )
             if part
         )
+        error_context = f"Repair type: {failure_type}\n"
+        if failure_type == "compile":
+            error_context += "For compile failures, repair source files only.\n"
+        elif failure_type == "pytest":
+            error_context += "For pytest failures, repair only failing implementation or test files.\n"
+        elif failure_type == "runtime":
+            error_context += "For runtime failures, repair src/main.py or broken imports only.\n"
+            
+        full_errors = f"{error_context}\n{errors}"
+        return self._project_repair_prompt(project_name, milestone, full_errors)
+
+    def _project_repair_prompt(self, project_name: str, milestone: int, errors: str) -> str:
+        key = self._slugify(project_name)
+        specification = self._project_specification(project_name)
+        
+        reqs = ""
+        if key == "build_agent":
+            reqs = (
+                "You MUST maintain these specific project requirements:\n"
+                "- planner\n"
+                "- executor\n"
+                "- workflow\n"
+                "- retry\n"
+                "- report\n"
+                "- queue\n"
+                "- src.main\n"
+                "- tests\n"
+                "- requirements.txt"
+            )
+        elif key == "weather_dashboard":
+            reqs = (
+                "You MUST maintain these specific project requirements:\n"
+                "- src.main imports\n"
+                "- get_weather(city) returns a dictionary\n"
+                "- main(argv=None)\n"
+                "- tests import src.main\n"
+                "- requests declared in requirements.txt if used\n"
+                "- CLI uses --city"
+            )
+        elif key == "job_hunter":
+            reqs = (
+                "You MUST maintain these specific project requirements:\n"
+                "- CSV export\n"
+                "- search_jobs()\n"
+                "- requirements.txt\n"
+                "- src.main"
+            )
+        elif key in {"hello", "hello_world", "hello_project"}:
+            reqs = (
+                "You MUST maintain these specific project requirements:\n"
+                "- greet()\n"
+                "- Hello output\n"
+                "- matching tests"
+            )
+
         return (
             "Repair the generated project files.\n"
             "Return only files that must be replaced using ===FILE:path=== blocks and one final ===END===.\n"
             "No markdown. No explanations. No prose. No code fences.\n\n"
-            f"Repair type: {failure_type}\n"
-            "For compile failures, repair source files only.\n"
-            "For pytest failures, repair only failing implementation or test files.\n"
-            "For runtime failures, repair src/main.py or broken imports only.\n\n"
             "Project specification:\n"
             f"{specification}\n\n"
+            f"{reqs}\n\n"
             f"Project name: {project_name}\n"
             f"Milestone: {milestone}\n\n"
             "Validation errors:\n"
