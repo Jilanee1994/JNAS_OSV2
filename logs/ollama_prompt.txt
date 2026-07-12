@@ -1,147 +1,71 @@
-You are JNAS Builder Agent V4.
-Generate a complete Python project.
-Never ask for confirmation.
-IMPORTANT
-You MUST return ONLY file blocks.
-Do NOT write explanations.
-Do NOT use markdown code fences.
-Do NOT write any text before the first file.
-Do NOT write any text after the last file.
+Repair ONLY the listed generated files before writing them to disk.
+Return ONLY replacement files using ===FILE:path=== blocks and one final ===END===.
+No markdown. No explanations. No prose. No code fences.
+Do not add new files. Do not regenerate the whole project.
+Fix ONLY the reported validation problems.
 
-Return every file EXACTLY like this, with one final ===END=== only:
-
-===FILE:README.md===
-<content>
-
-===FILE:requirements.txt===
-<content>
-
-===FILE:src/main.py===
-<python code>
-
-===FILE:BUILD_REPORT.md===
-<markdown>
-
-===END===
-The only valid tokens outside file content are ===FILE:path=== and the final ===END===.
-Include tests when appropriate.
-Do not output TODO, placeholder code, fake imports, pass-only implementations, or explanations.
-Generated tests must match generated implementation.
-
-Required project structure:
-- README.md
-- requirements.txt
-- src/__init__.py
-- src/main.py
-- tests/test_*.py
-The application must start with: python -m src.main --help
-Do not generate a Hello application unless the requested project is HELLO.
-
-Project specification:
-# KNOWLEDGE_GRAPH Specification
-
-IMPORTANT
-
-Do NOT generate a Hello application.
-
-Do NOT generate greet().
-
-Do NOT generate --name.
-
-Do NOT generate placeholder code.
-
-Do NOT generate NotImplementedError.
-
-Return ONLY valid Python code.
-
-## Goal
-
-Build a Knowledge Graph engine for JNAS AI Core.
-
-The project manages entities and relationships inside an enterprise knowledge graph.
-
-Language: Python
-
-Project Structure
-
-README.md
-requirements.txt
-
-src/
-    __init__.py
-    main.py
-    graph.py
-    entity.py
-    relationship.py
-
-tests/
-    test_main.py
-
-Required Classes
-
-KnowledgeGraph
-Entity
-Relationship
-
-Required Functions
-
-add_entity()
-remove_entity()
-add_relationship()
-find_entity()
-find_relationships()
-main(argv=None)
-
-CLI
-
-python main.py --entity Robot
-
-Tests MUST import
-
-from src.main import (
-    KnowledgeGraph,
-    Entity,
-    Relationship,
-)
-
-Requirements
-
-- Store entities
-- Store relationships
-- Search entities
-- Search relationships
-- Prevent duplicate entities
-- Prevent duplicate relationships
-- Export graph summary
-- Command-line interface
-- Complete unit tests
-
-Never
-
-- Hello application
-- TODO
-- FIXME
-- XXX
-- Placeholder comments
-- Replace with actual...
-- Example implementation
-- Dummy implementation
-- NotImplementedError
-- pass statements
-- Markdown
-- Code fences
-- Java
-- Go
-- Rust
-- JavaScript
-- TypeScript
-- PHP
-- Swift
-
-The implementation and tests MUST use the same API.
-
-Return production-quality Python code only.
-
-
-Project name: KNOWLEDGE_GRAPH
+Project name: EXECUTOR
 Milestone: 1
+
+Validation errors:
+- tests/test_main.py contains invalid placeholder marker: placeholder
+- src/main.py contains invalid placeholder marker: Example task
+- src/main.py contains invalid placeholder marker: Example tasks
+- src/main.py has duplicate function: __init__
+- tests/test_main.py imports missing symbol: src.main.Executor
+
+Current generated files:
+===CURRENT_FILE:src/__init__.py===
+"""Generated application package."""
+
+
+===CURRENT_FILE:src/execution_engine.py===
+from .main import Executor, ExecutionTask, ExecutionResult
+
+
+===CURRENT_FILE:src/main.py===
+import click
+from .execution_engine import Executor, ExecutionTask, ExecutionResult
+
+class ExecutionTask:
+    def __init__(self, task_id, command):
+        self.task_id = task_id
+        self.command = command
+        self.status = "pending"
+
+def execute_task(task):
+    """Mark the task as executed and return a result."""
+    task.status = "completed"
+    return ExecutionResult(task)
+
+class ExecutionResult:
+    def __init__(self, task):
+        self.task = task
+
+def execute_plan(plan):
+    for task in plan:
+        result = execute_task(task)
+        print(f"Task {task.task_id} executed: {result.task.status}")
+
+@click.command()
+@click.option('--goal', help='The goal or plan to execute')
+def main(goal):
+    """CLI entry point."""
+    if not goal:
+        raise click.ClickException("Missing --goal option")
+
+    # Example tasks for demonstration
+    tasks = [
+        ExecutionTask(task_id=1, command="echo Hello World"),
+        ExecutionTask(task_id=2, command="nonexistent_command")
+    ]
+
+    executor = Executor()
+    plan = [task.task_id for task in tasks]
+    execute_plan(plan)
+    result = execute_task(tasks[0])  # Show how to use the class
+    print(f"First Task Result: {result.task.status}")
+
+if __name__ == "__main__":
+    main()
+
