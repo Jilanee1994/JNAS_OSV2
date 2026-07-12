@@ -1266,34 +1266,16 @@ class BuilderV4:
     def _fallback_files(self, project_name: str) -> list[GeneratedFile]:
         key = self._slugify(project_name)
 
-        fallback_builders = {
-            "hello": self._hello_files,
-            "job_hunter": self._job_hunter_files,
-            "weather_dashboard": self._weather_dashboard_files,
-            "build_agent": self._build_agent_files,
-            "planner": self._planner_files,
-            "executor": self._executor_files,
-            "knowledge_graph": self._knowledge_graph_files,
-        }
+        if key == "job_hunter":
+            return self._job_hunter_files()
 
-        builder = fallback_builders.get(key)
+        if key == "weather_dashboard":
+            return self._weather_dashboard_files()
 
-        if builder is None:
-            return self._hello_files(project_name)
+        if key == "build_agent":
+            return self._build_agent_files()
 
-        if key == "hello":
-            return builder(project_name)
-
-        return builder()
-
-
-
-
-
-
-
-
-
+        return self._hello_files(project_name)
 
     def _hello_files(self, project_name: str) -> list[GeneratedFile]:
         return [
