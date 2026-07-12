@@ -1,125 +1,34 @@
-===FILE:README.md===
-# WEATHER_DASHBOARD
+===FILE:JNAS_AI_CORE/.builder_tmp/weather_dashboard/src/main.py===
+from weather_api import get_weather
 
-Weather Dashboard Application using Python
-
-## Installation
-
-Clone this repository:
-
-```bash
-git clone https://github.com/your-username/weather-dashboard.git
-```
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run the application:
-
-```bash
-python -m src.main --help
-```
-
-## Usage
-
-```
-usage: main.py [-h] [--city CITY]
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --city CITY           City name for weather forecast (required)
-```
-
-Provide a city as an argument to get the weather forecast.
-
-### Example:
-
-```bash
-python -m src.main --city London
-```
-
----
-
-===FILE:requirements.txt===
-requests
-beautifulsoup4
-argparse
-
-===FILE:src/__init__.py===""
-
-===FILE:src/main.py===
-import argparse
-from bs4 import BeautifulSoup
-import requests
-import sys
-
-
-def get_weather(city):
-    url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid=YOUR_API_KEY&units=metric"
-    response = requests.get(url)
-    data = response.json()
+def main(city):
+    weather_data = get_weather(city)
+    print(f"Temperature in {city}: {weather_data['temperature']}°C")
+    print(f"Conditions: {weather_data['conditions']}")
     
-    if "weather" in data and "main" in data:
-        weather_conditions = data["weather"][0]["description"]
-        temperature = data["main"]["temp"]
-        
-        print(f"Weather: {weather_conditions}")
-        print(f"Temperature: {temperature}°C")
-    else:
-        print("Failed to retrieve weather data.")
-        sys.exit(1)
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Get weather forecast for a city.")
-    parser.add_argument("--city", required=True, help="City name for weather forecast")
-    
-    args = parser.parse_args()
-    
-    get_weather(args.city)
-
-
 if __name__ == "__main__":
-    main()
+    import sys
+    city = sys.argv[1]
+    main(city)
 
-===FILE:tests/test_main.py===
-import unittest
-from unittest.mock import patch, MagicMock
-import sys
-from io import StringIO
-
-sys.path.insert(0, "../src")
-
+===FILE:JNAS_AI_CORE/.builder_tmp/weather_dashboard/tests/test_main.py===
 from main import get_weather, main
 
+def test_get_weather():
+    weather_data = get_weather("London")
+    assert weather_data["temperature"] == 15
+    assert weather_data["conditions"] == "Sunny"
 
-class TestMain(unittest.TestCase):
+def test_main():
+    import io
+    import sys
+    from unittest.mock import patch
     
-    @patch('requests.get')
-    def test_get_weather(self, mock_get):
-        city = "London"
-        api_response = {
-            'weather': [{'description': 'Clear sky'}],
-            'main': {'temp': 23}
-        }
+    expected_output = "Temperature in London: 15°C\nConditions: Sunny\n"
+    
+    with patch("sys.argv", ["main.py", "London"]), \
+         patch('sys.stdout', new_callable=io.StringIO) as stdout:
+        main("London")
         
-        mock_get.return_value.json.return_value = api_response
-        
-        get_weather(city)
-        output = StringIO()
-        sys.stdout = output
-        main([f"--city={city}"])
-        sys.stdout = sys.__stdout__
-        
-        expected_output = "Weather: Clear sky\nTemperature: 23.0°C\n"
-        
-        self.assertEqual(output.getvalue(), expected_output)
-
-
-if __name__ == "__main__":
-    unittest.main()
-
+    assert stdout.getvalue() == expected_output
 ===END===
