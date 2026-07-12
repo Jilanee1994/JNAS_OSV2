@@ -886,6 +886,7 @@ class BuilderV4:
             )
 
             files = self.parser.parse(response)
+            files = self._complete_required_files(project_name, files)
             self._write_files(project_root, files, report)
 
         except Exception as exc:
