@@ -432,15 +432,27 @@ class BuilderV4:
         )
 
     def _project_specification(self, project_name: str) -> str:
-        key = self._slugify(project_name)
+        project_key = self._slugify(project_name)
+
+        spec_file = (
+            Path(__file__).resolve().parent
+            / "specifications"
+            / f"{project_key}.md"
+        )
+
+        if spec_file.exists():
+            return spec_file.read_text(encoding="utf-8")
+
         return self._PROJECT_SPECIFICATIONS.get(
-            key,
+            project_key,
             (
                 f"Build an application that matches the requested project name: {project_name}. "
                 "Define its core domain behavior, expose it through a command-line interface, "
                 "and include tests for that behavior. Do not substitute a generic Hello application."
             ),
         )
+
+
 
     def _semantic_repair_prompt(self, project_name: str, milestone: int, semantic_errors: list[str]) -> str:
         specification = self._project_specification(project_name)
