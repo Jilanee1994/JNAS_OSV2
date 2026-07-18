@@ -20,3 +20,4 @@ applications/*
 # Runtime logs
 logs/ollama_prompt.txt
 logs/ollama_response.txt
+*.deb
