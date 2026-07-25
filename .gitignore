@@ -1,23 +1,105 @@
+# ==========================
+# Python
+# ==========================
 
 venv/
-.env
+.venv/
+
 __pycache__/
 **/__pycache__/
+
 *.pyc
 **/*.pyc
+*.pyo
+*.pyd
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==========================
+# Environment / Secrets
+# ==========================
+
+.env
+.env.*
+!.env.example
+
+*.key
+*.pem
+
+# ==========================
+# Node / Frontend
+# ==========================
+
 node_modules/
+
 dist/
 build/
 
+.next/
+.cache/
 
-# Generated applications
+# ==========================
+# Logs
+# ==========================
+
+*.log
+
+logs/
+!logs/.gitkeep
+
+# ==========================
+# JNAS Runtime Data
+# ==========================
+
+JNAS_AI_CORE/workspace/learning/
+JNAS_AI_CORE/workspace/*.json
+
+system_map.txt
+
+# ==========================
+# Temporary Files
+# ==========================
+
+*.tmp
+*.temp
+
+*.swp
+*.swo
+
+*~
+
+# ==========================
+# Generated Applications
+# ==========================
+
 applications/*
 !applications/.gitkeep
 
-# Build logs
-*.log
+workspace/generated_projects/
 
-# Runtime logs
-logs/ollama_prompt.txt
-logs/ollama_response.txt
+debug/
+failed_builds/
+
+# ==========================
+# OS Files
+# ==========================
+
+.DS_Store
+Thumbs.db
+
+# ==========================
+# Backup Files
+# ==========================
+
+*.backup
+*.bak
+
+# ==========================
+# Packages
+# ==========================
+
 *.deb
+*.zip
+*.tar
