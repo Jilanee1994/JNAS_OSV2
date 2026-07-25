@@ -35,18 +35,6 @@ DEFAULT_CONFIG = {
         "daily_report_path": "DAILY_REPORT.md",
     },
     "llm_router": {
-        "providers": [
-            {
-                "name": "ollama",
-                "endpoint": "http://127.0.0.1:11434/api/generate",
-                "model": "qwen2.5:7b",
-                "capabilities": ["general", "coding", "analysis"],
-                "response_field": "response",
-                "enabled": True,
-            }
-        ]
-    },
-    "llm_router": {
          "providers": [
         {
             "name": "ollama",
@@ -58,8 +46,8 @@ DEFAULT_CONFIG = {
         },
         {
             "name": "gemini",
-            "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
-            "model": "gemini-pro",
+            "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            "model": "gemini-2.0-flash",
             "capabilities": ["general", "coding", "analysis"],
             "response_field": "text",
             "enabled": False,

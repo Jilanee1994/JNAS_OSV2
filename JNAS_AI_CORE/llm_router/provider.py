@@ -51,7 +51,37 @@ class HTTPProvider:
     def generate(self, prompt: str, timeout: int = 120) -> ProviderResult:
         """Generate through a provider HTTP endpoint."""
         started = time.perf_counter()
-        payload = json.dumps({"model": self.model, "prompt": prompt, "stream": False}).encode("utf-8")
+        payload_data = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False
+        }
+
+        if self.name in {"groq", "openrouter"}:
+            payload_data = {
+                "model": self.model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            }
+
+        if self.name == "gemini":
+            payload_data = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ]
+            }
+
+        payload = json.dumps(payload_data).encode("utf-8")
         req = request.Request(self.endpoint, data=payload, headers={"Content-Type": "application/json", **self.headers})
         try:
             with request.urlopen(req, timeout=timeout) as response:

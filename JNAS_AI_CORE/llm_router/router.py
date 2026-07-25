@@ -87,8 +87,16 @@ class LLMRouter:
         configs = self.config_manager.get("llm_router.providers", [])
         providers = []
         for config in configs:
-            if not config.get("enabled", True):
+            name = config["name"]
+
+            if name in {"gemini", "groq", "openrouter"}:
+                headers = self._provider_headers(name)
+                if not headers:
+                    continue
+
+            if not config.get("enabled", True) and name == "ollama":
                 continue
+
             providers.append(
                 HTTPProvider(
                     name=config["name"],
