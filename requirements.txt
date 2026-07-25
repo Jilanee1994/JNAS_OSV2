@@ -1,0 +1,85 @@
+# =========================
+# JNAS AI Automation Platform
+# =========================
+
+# AI & LLM
+openai
+anthropic
+google-genai
+langchain
+langgraph
+llama-index
+chromadb
+sentence-transformers
+transformers
+torch
+accelerate
+tiktoken
+
+# Web Automation
+playwright
+selenium
+undetected-chromedriver
+
+# Scraping
+beautifulsoup4
+lxml
+html5lib
+requests
+httpx
+aiohttp
+trafilatura
+selectolax
+
+# Data Processing
+pandas
+numpy
+openpyxl
+xlsxwriter
+pyarrow
+
+# Images
+pillow
+opencv-python
+
+# APIs
+fastapi
+uvicorn
+flask
+
+# Database
+sqlalchemy
+alembic
+psycopg2-binary
+redis
+
+# Utilities
+python-dotenv
+pyyaml
+rich
+loguru
+tqdm
+tenacity
+schedule
+watchdog
+
+# Async
+anyio
+trio
+
+# Security
+cryptography
+bcrypt
+
+# File Handling
+python-multipart
+
+# Testing
+pytest
+pytest-playwright
+
+# Development
+black
+isort
+ruff
+mypy
