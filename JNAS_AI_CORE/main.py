@@ -1,8 +1,11 @@
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
 try:
     from JNAS_AI_CORE.llm.manager import LLMManager
 except ImportError:
     from llm.manager import LLMManager
-
 
 def main():
 
@@ -28,6 +31,7 @@ def main():
 
             print("\nAI >")
             print(response)
+            print("Provider routing active")  
 
         except Exception as e:
             print(f"\nERROR: {e}")

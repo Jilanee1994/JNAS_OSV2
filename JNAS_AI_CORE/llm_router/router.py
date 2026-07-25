@@ -1,7 +1,10 @@
+
 """Configuration-driven LLM router."""
 
 from __future__ import annotations
 
+
+import os
 import logging
 from typing import Any
 
@@ -45,6 +48,25 @@ class LLMRouter:
             self.logger.warning("Provider %s failed: %s", result.provider, result.error)
         return ProviderResult("none", "", False, 0.0, "; ".join(failures) or "No providers configured.")
 
+
+
+    def _provider_headers(self, name: str) -> dict[str, str]:
+        if name == "gemini":
+            key = os.getenv("JNAS_GEMINI_API_KEY", "")
+            return {"x-goog-api-key": key} if key else {}
+
+        if name == "groq":
+            key = os.getenv("JNAS_GROQ_API_KEY", "")
+            return {"Authorization": f"Bearer {key}"} if key else {}
+
+        if name == "openrouter":
+            key = os.getenv("JNAS_OPENROUTER_API_KEY", "")
+            return {"Authorization": f"Bearer {key}"} if key else {}
+
+        return {}
+
+
+
     def rank_providers(self, capability: str = "general", priority: int = 100) -> list[LLMProvider]:
         """Rank providers by capability, health, success rate, and latency."""
         historical = dict(self.learning_engine.rank_providers())
@@ -73,8 +95,11 @@ class LLMRouter:
                     endpoint=config["endpoint"],
                     model=config.get("model", ""),
                     capabilities=set(config.get("capabilities", ["general"])),
-                    headers=dict(config.get("headers", {})),
-                    response_field=config.get("response_field", "response"),
+                    headers={
+			**dict(config.get("headers", {})),
+			**self._provider_headers(config["name"]),
+		}, 
+                   response_field=config.get("response_field", "response"),
                 )
             )
         return providers

@@ -1,20 +1,18 @@
-try:
-    from JNAS_AI_CORE.llm.ollama_client import OllamaClient
-except ImportError:
-    from llm.ollama_client import OllamaClient
+from JNAS_AI_CORE.llm_router.router import LLMRouter
 
 
 class LLMManager:
 
-    def __init__(self, provider="ollama"):
+    def __init__(self):
+        self.router = LLMRouter()
 
-        self.provider = provider
+    def generate(self, prompt, capability="general"):
+        result = self.router.route(
+            prompt,
+            capability=capability
+        )
 
-        self.ollama = OllamaClient()
+        if not result.success:
+            raise Exception(result.error)
 
-    def generate(self, prompt):
-
-        if self.provider == "ollama":
-            return self.ollama.generate(prompt)
-
-        raise Exception(f"Unknown provider: {self.provider}")
+        return result.response

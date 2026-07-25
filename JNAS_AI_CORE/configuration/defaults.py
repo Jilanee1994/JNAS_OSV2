@@ -46,6 +46,42 @@ DEFAULT_CONFIG = {
             }
         ]
     },
+    "llm_router": {
+         "providers": [
+        {
+            "name": "ollama",
+            "endpoint": "http://127.0.0.1:11434/api/generate",
+            "model": "qwen2.5:7b",
+            "capabilities": ["general", "coding", "analysis"],
+            "response_field": "response",
+            "enabled": True,
+        },
+        {
+            "name": "gemini",
+            "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+            "model": "gemini-pro",
+            "capabilities": ["general", "coding", "analysis"],
+            "response_field": "text",
+            "enabled": False,
+        },
+        {
+            "name": "groq",
+            "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+            "model": "llama-3.1-8b-instant",
+            "capabilities": ["general", "coding", "analysis"],
+            "response_field": "text",
+            "enabled": False,
+        },
+        {
+            "name": "openrouter",
+            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+            "model": "openai/gpt-4o-mini",
+            "capabilities": ["general", "coding", "analysis"],
+            "response_field": "text",
+            "enabled": False,
+        },
+      ]
+    },
     "builder_v3": {
         "workspace": "workspace/generated_projects",
         "max_retries": 3,

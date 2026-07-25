@@ -1,6 +1,7 @@
 """Configuration loading from JSON, simple YAML, and environment variables."""
 
 from __future__ import annotations
+from dotenv import load_dotenv
 
 import json
 import os
@@ -25,6 +26,7 @@ class ConfigLoader:
 
     def load_environment(self, prefix: str = "JNAS_") -> dict[str, Any]:
         """Load environment variables into nested config keys."""
+        load_dotenv() 
         config: dict[str, Any] = {}
         for key, value in os.environ.items():
             if not key.startswith(prefix):
