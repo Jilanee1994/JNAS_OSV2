@@ -1,0 +1,18 @@
+{
+    "created_at": "2026-07-26T11:23:17.533065+00:00",
+    "id": "46823a41-c3fe-4bb0-b566-de3932fde00e",
+    "key": "self_healing:pdf_analyzer:dependency_fix:1785064997532",
+    "tags": [
+        "self_healing",
+        "successful_recovery"
+    ],
+    "updated_at": "2026-07-26T11:23:17.533069+00:00",
+    "value": {
+        "category": "Dependency Error",
+        "original_error": "============================= test session starts ==============================\nplatform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/ubuntu/ai-env/bin/python\ncachedir: .pytest_cache\nrootdir: /home/ubuntu/JNAS-os\nconfigfile: pytest.ini\nplugins: anyio-4.14.1\ncollecting ... collected 0 items / 1 error\n\n==================================== ERRORS ====================================\n______________ ERROR collecting pdf_analyzer/test_pdf_analyzer.py ______________\nImportError while importing test module '/home/ubuntu/JNAS-os/pdf_analyzer/test_pdf_analyzer.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/usr/lib/python3.12/importlib/__init__.py:90: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npdf_analyzer/__init__.py:3: in <module>\n    from .pdf_analyzer import Pdf_analyzer\npdf_analyzer/pdf_analyzer.py:5: in <module>\n    import pdfplumber\nE   ModuleNotFoundError: No module named 'pdfplumber'\n=========================== short test summary info ============================\nERROR pdf_analyzer/test_pdf_analyzer.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n=============================== 1 error in 0.12s ===============================\n",
+        "patch_path": "",
+        "patch_summary": "",
+        "recovery_action": "dependency_fix",
+        "retry_count": 0
+    }
+}

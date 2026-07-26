@@ -51,8 +51,16 @@ class RegistryWorkerAdapter:
     def execute(self, task: RoutedTask) -> WorkerResult:
         """Execute a registry tool for a routed task."""
         result = self.tool.execute(task)
-        if isinstance(result, WorkerResult):
-            return result
+
+        # Forward worker-compatible results directly
+        if hasattr(result, "success") and hasattr(result, "message"):
+            return WorkerResult(
+                success=result.success,
+                message=result.message,
+                result=getattr(result, "result", None),
+                errors=getattr(result, "errors", []),
+            )
+
         return WorkerResult(
             success=True,
             message="Registry tool executed.",

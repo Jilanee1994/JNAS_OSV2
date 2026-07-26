@@ -33,7 +33,7 @@ class LLMRouter:
         self.learning_engine = learning_engine or LearningEngine()
         self.logger = logger or logging.getLogger("JNAS_AI_CORE.llm_router")
 
-    def route(self, prompt: str, capability: str = "general", priority: int = 100, timeout: int = 120) -> ProviderResult:
+    def route(self, prompt: str, capability: str = "general", priority: int = 100, timeout: int = 300) -> ProviderResult:
         """Route prompt to the best provider and fallback on failure."""
         failures: list[str] = []
         for provider in self.rank_providers(capability, priority):

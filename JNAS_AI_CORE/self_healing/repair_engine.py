@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import logging
+import resource
+from pathlib import Path
+from typing import Any
+
+from .patcher import RecoveryPatch
+
+
+class RepairEngine:
+    """
+    Coordinates automatic repair generation.
+    """
+
+    def __init__(
+        self,
+        patch_generator: Any | None = None,
+    ) -> None:
+        self.logger = logging.getLogger(__name__)
+        self.patch_generator = patch_generator
+
+    def repair(
+        self,
+        failure_message: str,
+        target_path: Path,
+    ) -> RecoveryPatch | None:
+        """
+        Generate a recovery patch request.
+
+        Args:
+            failure_message: Failure details.
+            target_path: Target module path.
+
+        Returns:
+            RecoveryPatch if generated, otherwise None.
+        """
+
+        self.logger.info(
+            "Repair requested for %s",
+            target_path,
+        )
+
+        if not self.patch_generator:
+            self.logger.warning(
+                "No patch generator configured."
+            )
+            return None
+
+        memory_kb = resource.getrusage(
+            resource.RUSAGE_SELF
+        ).ru_maxrss
+
+        if memory_kb > 20000000:
+            self.logger.warning(
+                "Skipping repair due to high memory usage: %s KB",
+                memory_kb,
+            )
+            return None
+
+        safe_failure = failure_message[:8000]
+
+        repair_target = target_path
+
+        if repair_target.is_dir():
+            candidate = (
+                repair_target /
+                f"{repair_target.name}.py"
+            )
+
+            if candidate.exists():
+                repair_target = candidate
+
+        payload = {
+            "failure": safe_failure,
+            "analysis": safe_failure,
+            "source_path": str(repair_target),
+            "target_path": str(repair_target),
+        }
+
+        generated = self.patch_generator.generate_patch(payload)
+
+        if not generated:
+            self.logger.warning(
+                "Patch generator returned empty result."
+            )
+            return None
+
+        if isinstance(generated, RecoveryPatch):
+            patch = generated
+        else:
+            if isinstance(generated, dict):
+                patch = RecoveryPatch(
+                    path=Path(generated.get("path") or repair_target),
+                    content=str(generated.get("content", "")),
+                    summary=str(generated.get("summary", "Generated repair patch")),
+                )
+            else:
+                patch = RecoveryPatch(
+                    path=repair_target,
+                    content=str(generated),
+                    summary="Generated repair patch",
+                )
+
+        # Save generated repair attempt for debugging
+        try:
+            repair_dir = Path("logs/repairs")
+            repair_dir.mkdir(parents=True, exist_ok=True)
+
+            debug_file = repair_dir / f"{target_path.stem}_latest_patch.py"
+            debug_file.write_text(
+                patch.content,
+                encoding="utf-8",
+            )
+
+            self.logger.info(
+                "Repair patch saved: %s",
+                debug_file,
+            )
+
+        except Exception as exc:
+            self.logger.warning(
+                "Could not save repair patch: %s",
+                exc,
+            )
+
+        return patch

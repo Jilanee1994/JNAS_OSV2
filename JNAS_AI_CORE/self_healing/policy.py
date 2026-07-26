@@ -20,8 +20,8 @@ class RecoveryPolicy:
         self._mapping = {
             "Syntax Error": self.PATCH,
             "Import Error": self.PATCH,
-            "Dependency Error": self.ESCALATE,
-            "Runtime Error": self.RETRY,
+            "Dependency Error": "dependency_fix",
+            "Runtime Error": self.PATCH,
             "Validation Error": self.PATCH,
             "Configuration Error": self.ESCALATE,
             "Filesystem Error": self.ROLLBACK,

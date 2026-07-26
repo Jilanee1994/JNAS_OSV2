@@ -26,7 +26,7 @@ class LLMProvider(Protocol):
     name: str
     capabilities: set[str]
 
-    def generate(self, prompt: str, timeout: int = 120) -> ProviderResult:
+    def generate(self, prompt: str, timeout: int = 300) -> ProviderResult:
         """Generate a response."""
 
     def health_score(self) -> float:
@@ -48,7 +48,7 @@ class HTTPProvider:
     _failures: int = 0
     _total_time: float = 0.0
 
-    def generate(self, prompt: str, timeout: int = 120) -> ProviderResult:
+    def generate(self, prompt: str, timeout: int = 300) -> ProviderResult:
         """Generate through a provider HTTP endpoint."""
         started = time.perf_counter()
         payload_data = {

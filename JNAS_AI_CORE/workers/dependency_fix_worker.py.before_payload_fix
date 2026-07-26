@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import logging
+import re
+from pathlib import Path
+from typing import Any
+
+from JNAS_AI_CORE.orchestrator.interfaces import WorkerResult
+
+
+class DependencyFixWorker:
+    """
+    Repairs missing Python dependencies.
+    """
+
+    name = "dependency_fix"
+    task_type = "dependency_fix"
+
+    def __init__(self):
+        self.logger = logging.getLogger(
+            "JNAS_AI_CORE.workers.dependency_fix"
+        )
+
+    def initialize(self):
+        self.logger.info(
+            "DependencyFixWorker initialized."
+        )
+
+    def validate(self) -> bool:
+        return True
+
+    def execute(
+        self,
+        task,
+    ) -> WorkerResult:
+
+        error = str(
+            getattr(task, "metadata", {})
+        )
+
+        match = re.search(
+            r"No module named ['\"]([^'\"]+)['\"]",
+            error,
+        )
+
+        if not match:
+            return WorkerResult(
+                success=False,
+                message="Could not detect missing dependency.",
+                result=None,
+            )
+
+        package = match.group(1)
+
+        return WorkerResult(
+            success=True,
+            message=f"Dependency identified: {package}",
+            result={
+                "package": package,
+                "action": "add_requirement",
+            },
+        )
+
+    def shutdown(self):
+        self.logger.info(
+            "DependencyFixWorker shutdown."
+        )

@@ -1,0 +1,468 @@
+"""
+builder.builder
+----------------
+
+Builder Engine v1 -- orchestrates automatic module generation for
+JNAS_AI_CORE.
+
+Given a module name (e.g. ``planner``), the ``BuilderEngine``:
+    1. Creates the module folder (if missing).
+    2. Generates ``__init__.py``, ``<module>.py``, ``prompt.txt``, and
+       ``test_<module>.py`` using the existing ``LLMManager`` (via
+       ``CodeGenerator``).
+    3. Persists files using the existing ``FileTool`` (with a safe
+       filesystem fallback if ``FileTool`` is unavailable).
+    4. Runs the generated tests with pytest (via ``TestRunner``).
+    5. Produces a build report and prints a build summary
+       (via ``BuildReporter``).
+
+This module strictly reuses existing JNAS_AI_CORE components:
+``ProjectReader``, ``ProjectScanner``, ``ContextBuilder``,
+``LLMManager``, ``FileTool``, and ``CodeAgent``. It does not
+reimplement any of their responsibilities.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import logging
+import sys
+from pathlib import Path
+from typing import Any, List, Optional
+
+from .generator import CodeGenerator
+from .reporter import BuildReport, BuildReporter
+from .tester import TestRunner
+from .utils import get_logger, call_flexible, write_text_file
+
+try:
+    from JNAS_AI_CORE.self_healing import SelfHealingEngine
+    from JNAS_AI_CORE.self_healing.llm_patch_generator import LLMPatchGenerator
+except ImportError:
+    SelfHealingEngine = None
+    LLMPatchGenerator = None
+
+from JNAS_AI_CORE.executor.execution_result import ExecutionResult
+
+
+__all__ = ["BuilderEngine", "main"]
+
+_UNSET = object()
+
+
+def _try_import(module_path: str, class_name: str) -> Optional[type]:
+    """
+    Attempt to import an existing project component class.
+
+    Args:
+        module_path: Dotted module path (e.g. ``"llm.llm_manager"``).
+        class_name: Name of the class to import from that module.
+
+    Returns:
+        The imported class, or ``None`` if the import fails for any
+        reason (module not found, class not found, etc.). Failures are
+        non-fatal -- the Builder Engine degrades gracefully and logs
+        a warning so integrators know to wire the component manually.
+    """
+    candidates = (module_path, f"JNAS_AI_CORE.{module_path}")
+    for candidate in candidates:
+        try:
+            module = importlib.import_module(candidate)
+            return getattr(module, class_name)
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            continue
+    return None
+
+
+class BuilderEngine:
+    """
+    Orchestrates end-to-end automatic module generation.
+
+    Attributes:
+        project_root: Root directory in which new module folders are
+            created (typically the ``JNAS_AI_CORE`` directory).
+        llm_manager: Existing LLMManager instance.
+        file_tool: Existing FileTool instance.
+        project_reader: Existing ProjectReader instance (optional).
+        project_scanner: Existing ProjectScanner instance (optional).
+        context_builder: Existing ContextBuilder instance (optional).
+        code_agent: Existing CodeAgent instance (optional; may be used
+            by future Builder versions for code review/refinement).
+        generator: ``CodeGenerator`` wrapping ``llm_manager``.
+        tester: ``TestRunner`` used to execute generated tests.
+        reporter: ``BuildReporter`` used to persist/print results.
+        logger: Module-scoped logger.
+    """
+
+    #: Candidate method names tried against the injected FileTool.
+    _FILE_WRITE_CANDIDATES = ("write_file", "save_file", "write", "create_file")
+
+    def __init__(
+        self,
+        project_root: Optional[Path] = None,
+        llm_manager: Any = _UNSET,
+        file_tool: Optional[Any] = None,
+        project_reader: Optional[Any] = None,
+        project_scanner: Optional[Any] = None,
+        context_builder: Optional[Any] = None,
+        code_agent: Optional[Any] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        """
+        Initialize the BuilderEngine, wiring in existing project
+        components. Any component not explicitly passed in is resolved
+        via best-effort auto-import from the expected JNAS_AI_CORE
+        module locations; if that also fails, the component is left as
+        ``None`` and related features degrade gracefully.
+
+        Args:
+            project_root: Root directory for new module folders.
+                Defaults to the current working directory.
+            llm_manager: Existing ``LLMManager`` instance.
+            file_tool: Existing ``FileTool`` instance.
+            project_reader: Existing ``ProjectReader`` instance.
+            project_scanner: Existing ``ProjectScanner`` instance.
+            context_builder: Existing ``ContextBuilder`` instance.
+            code_agent: Existing ``CodeAgent`` instance.
+            logger: Optional logger override.
+        """
+        self.logger = logger or get_logger(__name__)
+
+        self.project_root = Path(project_root) if project_root else Path.cwd()
+
+        self.llm_manager = (
+            self._auto_wire("llm.manager", "LLMManager")
+            if llm_manager is _UNSET
+            else llm_manager
+        )
+
+
+        self.healer = (
+            SelfHealingEngine(
+                patch_generator=LLMPatchGenerator(self.llm_manager)
+            )
+            if SelfHealingEngine
+            else None
+        )
+        self.file_tool = file_tool or self._auto_wire("tools.file_tool", "FileTool")
+        self.project_reader = project_reader or self._auto_wire(
+            "tools.project_reader", "ProjectReader"
+        )
+        self.project_scanner = project_scanner or self._auto_wire(
+            "tools.project_scanner", "ProjectScanner"
+        )
+        self.context_builder = context_builder or self._auto_wire(
+            "llm.context_builder", "ContextBuilder"
+        )
+        self.code_agent = code_agent or self._auto_wire("agent.code_agent", "CodeAgent")
+
+        if self.llm_manager is None:
+            raise RuntimeError(
+                "BuilderEngine requires an LLMManager instance. None was "
+                "provided and auto-import from 'llm.manager.LLMManager' "
+                "failed. Pass one explicitly: BuilderEngine(llm_manager=...)."
+            )
+
+        self.generator = CodeGenerator(
+            llm_manager=self.llm_manager,
+            context_builder=self.context_builder,
+            logger=self.logger,
+        )
+        self.tester = TestRunner(logger=self.logger)
+        self.reporter = BuildReporter(
+            reports_dir=self.project_root / "logs" / "build_reports",
+            logger=self.logger,
+        )
+
+    def _auto_wire(self, module_path: str, class_name: str) -> Optional[Any]:
+        """
+        Attempt to auto-instantiate an existing component with a
+        no-argument constructor.
+
+        Args:
+            module_path: Dotted module path to import from.
+            class_name: Class name to instantiate.
+
+        Returns:
+            An instance of the component, or ``None`` if import or
+            instantiation fails.
+        """
+        cls = _try_import(module_path, class_name)
+        if cls is None:
+            self.logger.warning(
+                "Could not auto-import %s.%s -- inject it explicitly if needed.",
+                module_path,
+                class_name,
+            )
+            return None
+        try:
+            return cls()
+        except TypeError as exc:
+            self.logger.warning(
+                "Found %s.%s but could not instantiate with no arguments (%s). "
+                "Inject an already-constructed instance instead.",
+                module_path,
+                class_name,
+                exc,
+            )
+            return None
+
+    # ------------------------------------------------------------------ #
+    # File persistence
+    # ------------------------------------------------------------------ #
+    def _save_file(self, path: Path, content: str) -> None:
+        """
+        Persist a file using the existing ``FileTool`` if available,
+        falling back to direct filesystem writes otherwise.
+
+        Args:
+            path: Destination path.
+            content: File content to write.
+
+        Raises:
+            OSError: If the fallback filesystem write fails.
+        """
+        if self.file_tool is not None:
+            try:
+                call_flexible(self.file_tool, self._FILE_WRITE_CANDIDATES, str(path), content)
+                return
+            except (AttributeError, TypeError) as exc:
+                self.logger.warning(
+                    "FileTool call failed for %s (%s); falling back to direct write.",
+                    path,
+                    exc,
+                )
+        write_text_file(path, content)
+
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
+    def build(self, module_name: str, run_tests: bool = True) -> BuildReport:
+        """
+        Build a new module end-to-end: scaffold, generate, save, test,
+        and report.
+
+        Args:
+            module_name: Name of the module to create (e.g. ``"planner"``).
+            run_tests: Whether to execute generated tests after creation.
+                Defaults to ``True``.
+
+        Returns:
+            A ``BuildReport`` summarizing the outcome.
+        """
+        module_name = module_name.strip().lower()
+        if not module_name.isidentifier():
+            raise ValueError(
+                f"Module name '{module_name}' is not a valid Python identifier."
+            )
+
+        self.logger.info("Starting build for module '%s'.", module_name)
+        report = BuildReport(module_name=module_name)
+        module_dir = self.project_root / module_name
+
+        try:
+            module_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            report.generation_errors.append(f"Failed to create module directory: {exc}")
+            self.logger.error("Failed to create directory %s: %s", module_dir, exc)
+            self.reporter.print_summary(report)
+            return report
+
+        # 1. __init__.py
+        self._build_file(
+            report,
+            module_dir / "__init__.py",
+            lambda: self.generator.generate_init_code(module_name),
+            "__init__.py",
+        )
+
+        # 2. <module>.py
+        module_code = self._build_file(
+            report,
+            module_dir / f"{module_name}.py",
+            lambda: self.generator.generate_module_code(module_name),
+            f"{module_name}.py",
+        )
+
+        # 3. prompt.txt
+        self._build_file(
+            report,
+            module_dir / "prompt.txt",
+            lambda: self.generator.generate_prompt_artifact(module_name),
+            "prompt.txt",
+        )
+
+        # 4. test_<module>.py
+        test_code = self._build_file(
+            report,
+            module_dir / f"test_{module_name}.py",
+            lambda: self.generator.generate_test_code(module_name, module_code or ""),
+            f"test_{module_name}.py",
+        )
+
+        # 5. Run tests
+        if run_tests and test_code:
+            try:
+                outcome = self.tester.run(
+                    module_name,
+                    module_dir / f"test_{module_name}.py"
+                )
+
+                if not outcome.success and self.healer:
+                    self.logger.warning(
+                        "Tests failed for %s. Starting self healing.",
+                        module_name,
+                    )
+
+                    execution_result = ExecutionResult(
+                        task_id=module_name,
+                        success=outcome.success,
+                        output=getattr(outcome, "raw_result", None),
+                        error=str(
+                            getattr(
+                                getattr(outcome, "raw_result", None),
+                                "stdout",
+                                outcome,
+                            )
+                        ),
+                        metadata={
+                            "module": module_name,
+                            "validation_target": str(module_dir),
+                        },
+                    )
+
+                    recovery = self.healer.recover(
+                        failure=execution_result,
+                        source_path=module_dir / f"{module_name}.py",
+                        validation_target=module_dir,
+                        traceback_text=str(
+                            getattr(
+                                outcome,
+                                "raw_result",
+                                outcome,
+                            )
+                        ),
+                        metadata={
+                            "module": module_name,
+                            "test_file": str(
+                                module_dir / f"test_{module_name}.py"
+                            ),
+                        },
+                    )
+
+                    self.logger.info(
+                        "Self healing result: %s",
+                        recovery.message,
+                    )
+
+                    if recovery.success:
+                        outcome = self.tester.run(
+                            module_name,
+                            module_dir / f"test_{module_name}.py"
+                        )
+
+                report.test_outcome = outcome
+            except Exception as exc:  # noqa: BLE001 - never let testing crash the build
+                report.generation_errors.append(f"Test execution failed: {exc}")
+                self.logger.error("Test execution raised an exception: %s", exc)
+
+        # 6. Report + summary
+        try:
+            self.reporter.save_report(report)
+        except OSError as exc:
+            report.generation_errors.append(f"Failed to save build report: {exc}")
+
+        self.reporter.print_summary(report)
+        return report
+
+    def _build_file(
+        self,
+        report: BuildReport,
+        path: Path,
+        content_factory: Any,
+        label: str,
+    ) -> Optional[str]:
+        """
+        Generate content via ``content_factory`` and persist it,
+        recording success/failure on the given report.
+
+        Args:
+            report: The in-progress ``BuildReport`` to update.
+            path: Destination file path.
+            content_factory: Zero-argument callable producing the file
+                content (typically a ``CodeGenerator`` method).
+            label: Human-readable label for logging/reporting.
+
+        Returns:
+            The generated content string, or ``None`` if generation or
+            saving failed.
+        """
+        try:
+            content = content_factory()
+            self._save_file(path, content)
+            report.created_files.append(str(path))
+            self.logger.info("Created %s", path)
+            return content
+        except Exception as exc:  # noqa: BLE001 - captured as a build-level failure
+            error_msg = f"Failed to create {label}: {exc}"
+            report.generation_errors.append(error_msg)
+            self.logger.error(error_msg)
+            return None
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """
+    Build the CLI argument parser for the Builder Engine.
+
+    Returns:
+        A configured ``argparse.ArgumentParser``.
+    """
+    parser = argparse.ArgumentParser(
+        prog="builder.py",
+        description="JNAS AI Core -- Builder Engine v1: automatic module scaffolding.",
+    )
+    parser.add_argument(
+        "module_name",
+        help="Name of the module to generate (e.g. 'planner').",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=None,
+        help="Root directory in which to create the module folder "
+        "(defaults to the current working directory).",
+    )
+    parser.add_argument(
+        "--no-tests",
+        action="store_true",
+        help="Skip running pytest after generating the module.",
+    )
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """
+    CLI entrypoint: ``python builder.py <module_name>``.
+
+    Args:
+        argv: Optional argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Process exit code: ``0`` on success, ``1`` on failure.
+    """
+    parser = _build_arg_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        engine = BuilderEngine(project_root=args.project_root)
+    except RuntimeError as exc:
+        print(f"Builder Engine initialization failed: {exc}", file=sys.stderr)
+        return 1
+
+    report = engine.build(args.module_name, run_tests=not args.no_tests)
+    return 0 if report.success else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

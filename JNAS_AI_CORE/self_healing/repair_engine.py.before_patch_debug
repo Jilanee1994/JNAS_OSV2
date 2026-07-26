@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import logging
+import resource
+from pathlib import Path
+from typing import Any
+
+from .patcher import RecoveryPatch
+
+
+class RepairEngine:
+    """
+    Coordinates automatic repair generation.
+    """
+
+    def __init__(
+        self,
+        patch_generator: Any | None = None,
+    ) -> None:
+        self.logger = logging.getLogger(__name__)
+        self.patch_generator = patch_generator
+
+    def repair(
+        self,
+        failure_message: str,
+        target_path: Path,
+    ) -> RecoveryPatch | None:
+        """
+        Generate a recovery patch request.
+
+        Args:
+            failure_message: Failure details.
+            target_path: Target module path.
+
+        Returns:
+            RecoveryPatch if generated, otherwise None.
+        """
+
+        self.logger.info(
+            "Repair requested for %s",
+            target_path,
+        )
+
+        if not self.patch_generator:
+            self.logger.warning(
+                "No patch generator configured."
+            )
+            return None
+
+        memory_kb = resource.getrusage(
+            resource.RUSAGE_SELF
+        ).ru_maxrss
+
+        if memory_kb > 20000000:
+            self.logger.warning(
+                "Skipping repair due to high memory usage: %s KB",
+                memory_kb,
+            )
+            return None
+
+        safe_failure = failure_message[:8000]
+
+        payload = {
+            "failure": safe_failure,
+            "target_path": str(target_path),
+        }
+
+        generated = self.patch_generator.generate_patch(payload)
+
+        if not generated:
+            self.logger.warning(
+                "Patch generator returned empty result."
+            )
+            return None
+
+        if isinstance(generated, RecoveryPatch):
+            return generated
+
+        return RecoveryPatch(
+            path=target_path,
+            content=str(generated),
+            summary="Generated repair patch",
+        )

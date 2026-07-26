@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,10 +15,14 @@ from .request import UserRequest
 from .response import ExecutionResponse
 from .router import RoutedTask, TaskRouter
 
+from JNAS_AI_CORE.memory.memory_manager import MemoryManager
+
 try:
     from JNAS_AI_CORE.agent.code_agent import CodeAgent
     from JNAS_AI_CORE.Builder import BuilderEngine
     from JNAS_AI_CORE.llm.manager import LLMManager
+    from JNAS_AI_CORE.workers import DependencyFixWorker
+    from JNAS_AI_CORE.registry.metadata import ToolMetadata
 except ImportError:
     from agent.code_agent import CodeAgent
     from Builder import BuilderEngine
@@ -24,7 +30,6 @@ except ImportError:
 
 
 class AIOrchestrator:
-    """Coordinates existing JNAS AI Core components."""
 
     def __init__(
         self,
@@ -37,189 +42,389 @@ class AIOrchestrator:
         project_root: Path | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
+
         self.code_agent = code_agent
         self.llm_manager = llm_manager
         self.builder_engine = builder_engine
+
         self.router = router or TaskRouter()
-        self.workers: dict[str, BaseWorker] = dict(workers or {})
+        self.workers = dict(workers or {})
         self.registry_adapter = registry_adapter
-        self.project_root = Path(project_root) if project_root else Path.cwd()
+
+        self.project_root = (
+            Path(project_root)
+            if project_root
+            else Path.cwd()
+        )
+
         self.logger = logger or logging.getLogger(__name__)
         self.initialized = False
+        self.memory = MemoryManager()
+
 
     def initialize(self) -> None:
-        """Initialize missing dependencies using existing project classes."""
+
         if self.initialized:
             return
 
         self.llm_manager = self.llm_manager or LLMManager()
         self.code_agent = self.code_agent or CodeAgent()
-        self.builder_engine = self.builder_engine or BuilderEngine(
-            project_root=self.project_root,
-            llm_manager=self.llm_manager,
-        )
-        self._register_default_workers()
-        self.initialized = True
-        self.logger.info("AIOrchestrator initialized.")
 
-    def register_worker(self, worker: BaseWorker) -> None:
-        """Register or replace a worker for a routed task type."""
-        if not worker.task_type:
-            raise ValueError("worker.task_type must be a non-empty string.")
-        self.workers[worker.task_type] = worker
+        self.builder_engine = (
+            self.builder_engine
+            or BuilderEngine(
+                project_root=self.project_root,
+                llm_manager=self.llm_manager,
+                registry_adapter=self.registry_adapter,
+            )
+        )
+
+        self._register_default_workers()
+
+        self.initialized = True
+
+        self.logger.info(
+            "AIOrchestrator initialized."
+        )
+
 
     def handle_request(
         self,
         user_input: str,
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionResponse:
-        """Normalize, route, and execute a user request."""
+
         self.initialize()
-        request = UserRequest(user_input=user_input, metadata=metadata or {})
+
+        request = UserRequest(
+            user_input=user_input,
+            metadata=metadata or {},
+        )
+
         task = self.route_task(request)
+
         return self.execute(task)
 
-    def route_task(self, task: UserRequest | str) -> RoutedTask:
-        """Route a raw string or normalized request to a supported task type."""
-        request = task if isinstance(task, UserRequest) else UserRequest(user_input=task)
-        routed_task = self.router.route(request)
-        self.logger.debug(
-            "Request %s routed to %s.",
-            request.request_id,
-            routed_task.task_type,
-        )
-        return routed_task
 
-    def execute(self, task: RoutedTask) -> ExecutionResponse:
-        """Execute a routed task through the appropriate existing component."""
+    def route_task(
+        self,
+        task: UserRequest | str,
+    ) -> RoutedTask:
+
+        request = (
+            task
+            if isinstance(task, UserRequest)
+            else UserRequest(user_input=task)
+        )
+
+        return self.router.route(request)
+
+
+    def execute(
+        self,
+        task: RoutedTask,
+    ) -> ExecutionResponse:
+
         if not self.initialized:
-            raise RuntimeError("AIOrchestrator must be initialized before execution.")
+            raise RuntimeError(
+                "AIOrchestrator must be initialized before execution."
+            )
 
         started = time.perf_counter()
+
         try:
-            return self._execute_routed_task(task, started)
+            return self._execute_routed_task(
+                task,
+                started,
+            )
+
         except Exception as exc:
-            self.logger.exception("Task execution failed.")
+
+            self.logger.exception(
+                "Task execution failed."
+            )
+
             return self._response(
-                success=False,
-                message="Task execution failed.",
-                started=started,
+                False,
+                "Task execution failed.",
+                started,
                 errors=[str(exc)],
             )
 
-    def shutdown(self) -> None:
-        """Release orchestrator references to runtime components."""
-        self.code_agent = None
-        self.llm_manager = None
-        self.builder_engine = None
-        self.workers.clear()
-        self.initialized = False
-        self.logger.info("AIOrchestrator shut down.")
 
     def _execute_routed_task(
         self,
         task: RoutedTask,
         started: float,
     ) -> ExecutionResponse:
-        worker = self._resolve_worker(task.task_type)
+
+        worker = self._resolve_worker(
+            task.task_type
+        )
+
         if worker is None:
             return self._response(
-                success=False,
-                message="Unknown task type.",
-                started=started,
-                errors=[f"Unsupported task type: {task.task_type}"],
+                False,
+                "Unknown task type.",
+                started,
+                errors=[
+                    f"Unsupported task type: {task.task_type}"
+                ],
             )
 
         result = worker.execute(task)
+
         return self._response(
-            success=result.success,
-            message=result.message,
-            started=started,
-            result=result.result,
-            errors=result.errors,
+            result.success,
+            result.message,
+            started,
+            result.result,
+            result.errors,
         )
 
-    def _resolve_worker(self, task_type: str) -> BaseWorker | None:
-        if self.registry_adapter is not None:
-            worker = self.registry_adapter.resolve_worker(task_type)
-            if worker is not None:
+
+    def _resolve_worker(
+        self,
+        task_type: str,
+    ) -> BaseWorker | None:
+
+        if self.registry_adapter:
+
+            worker = (
+                self.registry_adapter
+                .resolve_worker(task_type)
+            )
+
+            if worker:
                 return worker
+
         return self.workers.get(task_type)
 
-    def _register_default_workers(self) -> None:
+
+    def _register_default_workers(self):
+
         if TaskRouter.CODE_GENERATION not in self.workers:
-            self.register_worker(CodeAgentWorker(self.code_agent))
+            self.register_worker(
+                CodeAgentWorker(
+                    self.code_agent
+                )
+            )
+
         if TaskRouter.BUILDER not in self.workers:
-            self.register_worker(BuilderWorker(self.builder_engine))
+            self.register_worker(
+                BuilderWorker(
+                    self.builder_engine,
+                    self.memory
+                )
+            )
+
         if TaskRouter.CHAT not in self.workers:
-            self.register_worker(LLMWorker(self.llm_manager))
+            self.register_worker(
+                LLMWorker(
+                    self.llm_manager
+                )
+            )
+
+        if "dependency_fix" not in self.workers:
+            dependency_worker = DependencyFixWorker()
+
+            self.register_worker(
+                dependency_worker
+            )
+
+            if self.registry_adapter:
+                self.registry_adapter.register_worker(
+                    dependency_worker,
+                    ToolMetadata(
+                        tool_id="dependency_fix",
+                        name="Dependency Fix Worker",
+                        description="Repairs missing Python dependencies.",
+                        version="1.0",
+                        author="JNAS",
+                        category="self_healing",
+                        supported_tasks=[
+                            "dependency_fix"
+                        ],
+                        input_types=[
+                            "error_message"
+                        ],
+                        output_types=[
+                            "WorkerResult"
+                        ],
+                    ),
+                )
+
+
+    def register_worker(
+        self,
+        worker: BaseWorker,
+    ):
+
+        self.workers[
+            worker.task_type
+        ] = worker
+
 
     def _response(
         self,
-        success: bool,
-        message: str,
-        started: float,
-        result: Any = None,
-        errors: list[str] | None = None,
-    ) -> ExecutionResponse:
+        success,
+        message,
+        started,
+        result=None,
+        errors=None,
+    ):
+
         return ExecutionResponse(
             success=success,
             message=message,
             result=result,
-            execution_time=time.perf_counter() - started,
+            execution_time=time.perf_counter()-started,
             errors=errors or [],
         )
 
 
 class CodeAgentWorker:
-    """Worker adapter for the existing CodeAgent."""
 
     task_type = TaskRouter.CODE_GENERATION
 
-    def __init__(self, code_agent: Any) -> None:
-        self.code_agent = code_agent
+    def __init__(self, agent):
+        self.agent = agent
 
-    def execute(self, task: RoutedTask) -> WorkerResult:
-        result = self.code_agent.generate_code(task.request.user_input)
+    def execute(self, task):
+        result = self.agent.generate_code(
+            task.request.user_input
+        )
+
         return WorkerResult(
-            success=True,
-            message="Code generation completed.",
-            result=result,
+            True,
+            "Code generation completed.",
+            result,
         )
 
 
 class BuilderWorker:
-    """Worker adapter for the existing Builder Engine."""
 
     task_type = TaskRouter.BUILDER
 
-    def __init__(self, builder_engine: Any) -> None:
-        self.builder_engine = builder_engine
+    def __init__(self, builder, memory=None):
+        self.builder = builder
+        self.memory = memory
 
-    def execute(self, task: RoutedTask) -> WorkerResult:
-        module_name = task.payload.get("module_name")
-        if not module_name:
-            raise ValueError("Builder task requires a module_name payload.")
-        result = self.builder_engine.build(module_name)
+    def execute(self, task):
+
+        module_name = (
+            task.payload.get("module_name")
+        )
+
+        print("\n" + "=" * 50)
+        print("JNAS CHANGE APPROVAL REPORT")
+        print("=" * 50)
+
+        print("TASK:")
+        print(task.request.user_input)
+
+        print("")
+        print("MODULE:")
+        print(module_name)
+
+        print("")
+        print("ACTIONS:")
+        print("1. Create module")
+        print("2. Generate files")
+        print("3. Register component")
+        print("4. Run validation")
+
+        print("")
+        print("RISK:")
+        print("LOW")
+
+        print("")
+        print("DEPENDENCIES:")
+        print("- Python")
+        print("- Existing JNAS Worker API")
+
+        print("")
+        print("STATUS:")
+        print("WAITING FOR APPROVAL")
+
+        print("=" * 50)
+
+        approval = input("Approve? (yes/no): ").strip().lower()
+
+        self._save_approval(
+            task.request.user_input,
+            module_name,
+            approval
+        )
+
+        self.memory.save_memory(
+            key=f"approval_{module_name}",
+            value={
+                "task": task.request.user_input,
+                "module": module_name,
+                "decision": approval,
+            },
+            tags=[
+                "approval",
+                "builder",
+                module_name,
+            ],
+        )
+
+        if approval != "yes":
+            return WorkerResult(
+                False,
+                "Build rejected by user.",
+                None,
+            )
+
+        result = self.builder.build(
+            module_name
+        )
+
         return WorkerResult(
-            success=True,
-            message="Builder task completed.",
-            result=result,
+            True,
+            "Builder task completed.",
+            result,
         )
 
 
+    def _save_approval(self, task, module, decision):
+        log_path = Path("JNAS_AI_CORE/workspace/approval_logs/approvals.jsonl")
+
+        log_path.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        record = {
+            "task": task,
+            "module": module,
+            "decision": decision,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        with log_path.open("a") as f:
+            f.write(
+                json.dumps(record) + "\n"
+            )
+
+
 class LLMWorker:
-    """Worker adapter for the existing LLMManager."""
 
     task_type = TaskRouter.CHAT
 
-    def __init__(self, llm_manager: Any) -> None:
-        self.llm_manager = llm_manager
+    def __init__(self, llm):
+        self.llm = llm
 
-    def execute(self, task: RoutedTask) -> WorkerResult:
-        result = self.llm_manager.generate(task.request.user_input)
+    def execute(self, task):
+
+        result = self.llm.generate(
+            task.request.user_input
+        )
+
         return WorkerResult(
-            success=True,
-            message="Chat response generated.",
-            result=result,
+            True,
+            "Chat response generated.",
+            result,
         )

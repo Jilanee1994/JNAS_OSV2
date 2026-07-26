@@ -100,7 +100,24 @@ class CodeGenerator:
                 self._CONTEXT_METHOD_CANDIDATES,
                 module_name,
             )
-            return str(result) if result else ""
+            if not result:
+                return ""
+
+            context = str(result)
+
+            # Prevent huge repository context from exhausting memory
+            max_context_chars = 12000
+
+            if len(context) > max_context_chars:
+                self.logger.warning(
+                    "Context truncated for module '%s': %s -> %s chars",
+                    module_name,
+                    len(context),
+                    max_context_chars,
+                )
+                context = context[:max_context_chars]
+
+            return context
         except Exception as exc:  # noqa: BLE001 - context is best-effort, never fatal
             self.logger.warning(
                 "ContextBuilder call failed for module '%s': %s", module_name, exc
@@ -112,25 +129,24 @@ class CodeGenerator:
     # ------------------------------------------------------------------ #
     def _invoke_llm(self, prompt: str) -> str:
         """
-        Invoke the injected ``LLMManager`` with a prompt.
-
-        Args:
-            prompt: The full prompt to send.
-
-        Returns:
-            Raw text returned by the LLM.
-
-        Raises:
-            RuntimeError: If the LLM manager cannot be invoked with any
-                known method signature.
+        Invoke the injected LLMManager with a prompt.
         """
+
         try:
-            result = call_flexible(self.llm_manager, self._LLM_METHOD_CANDIDATES, prompt)
-        except (AttributeError, TypeError) as exc:
-            raise RuntimeError(f"Failed to invoke LLMManager: {exc}") from exc
+            result = call_flexible(
+                self.llm_manager,
+                self._LLM_METHOD_CANDIDATES,
+                prompt,
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"LLM generation failed: {exc}"
+            ) from exc
 
         if not isinstance(result, str):
             result = str(result)
+
         return result
 
     # ------------------------------------------------------------------ #

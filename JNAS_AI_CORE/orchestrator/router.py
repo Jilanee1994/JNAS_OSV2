@@ -59,8 +59,26 @@ class TaskRouter:
     def _is_builder_request(self, request: UserRequest) -> bool:
         if request.metadata.get("task_type") == self.BUILDER:
             return True
-        text = request.user_input.strip().lower()
-        return text.startswith(("builder ", "build module ", "create module "))
+
+        text = request.user_input.lower()
+
+        keywords = [
+            "create worker",
+            "build worker",
+            "build telegram",
+            "telegram worker",
+            "make worker",
+            "make ",
+            "create analyzer",
+            "pdf analyzer",
+            "create module",
+            "build module",
+            "browser automation",
+            "develop",
+            "implement",
+        ]
+
+        return any(keyword in text for keyword in keywords)
 
     def _is_code_generation_request(self, request: UserRequest) -> bool:
         if request.metadata.get("task_type") == self.CODE_GENERATION:
@@ -72,16 +90,39 @@ class TaskRouter:
     def _is_chat_request(self, request: UserRequest) -> bool:
         if request.metadata.get("task_type") == self.CHAT:
             return True
-        text = request.user_input.strip()
-        return text.endswith("?") or len(text.split()) > 2
+
+        return True
 
     def _extract_module_name(self, request: UserRequest) -> str:
         metadata_module = request.metadata.get("module_name")
+
         if metadata_module:
             return str(metadata_module)
 
-        words = request.user_input.strip().split()
-        if not words:
-            raise ValueError("Cannot extract module name from an empty request.")
+        text = request.user_input.lower()
 
-        return words[-1].strip().lower()
+        replacements = [
+            "create a ",
+            "create ",
+            "build a ",
+            "build ",
+            "make a ",
+            "make ",
+            "worker",
+            "module",
+            "service",
+            "application",
+        ]
+
+        for item in replacements:
+            text = text.replace(item, "")
+
+        name = "_".join(
+            text.strip().split()
+        )
+
+        if not name:
+            return "generated_module"
+
+        return name
+

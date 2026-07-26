@@ -1,0 +1,101 @@
+"""LLM provider interfaces and HTTP provider implementation."""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+from urllib import error, request
+
+
+@dataclass
+class ProviderResult:
+    """Result returned by an LLM provider."""
+
+    provider: str
+    response: str
+    success: bool
+    duration: float
+    error: str = ""
+
+
+class LLMProvider(Protocol):
+    """Provider interface for LLM routing."""
+
+    name: str
+    capabilities: set[str]
+
+    def generate(self, prompt: str, timeout: int = 120) -> ProviderResult:
+        """Generate a response."""
+
+    def health_score(self) -> float:
+        """Return provider health score from 0 to 1."""
+
+
+@dataclass
+class HTTPProvider:
+    """Configurable HTTP LLM provider."""
+
+    name: str
+    endpoint: str
+    model: str
+    capabilities: set[str] = field(default_factory=set)
+    headers: dict[str, str] = field(default_factory=dict)
+    response_field: str = "response"
+    enabled: bool = True
+    _successes: int = 0
+    _failures: int = 0
+    _total_time: float = 0.0
+
+    def generate(self, prompt: str, timeout: int = 120) -> ProviderResult:
+        """Generate through a provider HTTP endpoint."""
+        started = time.perf_counter()
+ 	
+    payload_data = {
+    "model": self.model,
+    "prompt": prompt,
+    "stream": False
+}
+
+if self.name in {"groq", "openrouter"}:
+    payload_data = {
+        "model": self.model,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    }
+
+payload = json.dumps(payload_data).encode("utf-8")	
+
+	
+       payload = json.dumps({"model": self.model, "prompt": prompt, "stream": False}).encode("utf-8")
+        req = request.Request(self.endpoint, data=payload, headers={"Content-Type": "application/json", **self.headers})
+        try:
+            with request.urlopen(req, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            text = str(body.get(self.response_field, body.get("text", "")))
+            duration = time.perf_counter() - started
+            self._successes += 1
+            self._total_time += duration
+            return ProviderResult(self.name, text, True, duration)
+        except (error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            duration = time.perf_counter() - started
+            self._failures += 1
+            self._total_time += duration
+            return ProviderResult(self.name, "", False, duration, str(exc))
+
+    def health_score(self) -> float:
+        """Return recent provider health."""
+        total = self._successes + self._failures
+        if total == 0:
+            return 1.0 if self.enabled else 0.0
+        return self._successes / total if self.enabled else 0.0
+
+    def average_response_time(self) -> float:
+        """Return average response time."""
+        total = self._successes + self._failures
+        return self._total_time / total if total else 0.0

@@ -36,6 +36,16 @@ from .reporter import BuildReport, BuildReporter
 from .tester import TestRunner
 from .utils import get_logger, call_flexible, write_text_file
 
+try:
+    from JNAS_AI_CORE.self_healing import SelfHealingEngine
+    from JNAS_AI_CORE.self_healing.llm_patch_generator import LLMPatchGenerator
+except ImportError:
+    SelfHealingEngine = None
+    LLMPatchGenerator = None
+
+from JNAS_AI_CORE.executor.execution_result import ExecutionResult
+
+
 __all__ = ["BuilderEngine", "main"]
 
 _UNSET = object()
@@ -97,6 +107,7 @@ class BuilderEngine:
         project_scanner: Optional[Any] = None,
         context_builder: Optional[Any] = None,
         code_agent: Optional[Any] = None,
+        registry_adapter: Optional[Any] = None,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         """
@@ -118,12 +129,24 @@ class BuilderEngine:
             logger: Optional logger override.
         """
         self.logger = logger or get_logger(__name__)
+        self.registry_adapter = registry_adapter
+
         self.project_root = Path(project_root) if project_root else Path.cwd()
 
         self.llm_manager = (
             self._auto_wire("llm.manager", "LLMManager")
             if llm_manager is _UNSET
             else llm_manager
+        )
+
+
+        self.healer = (
+            SelfHealingEngine(
+                patch_generator=LLMPatchGenerator(self.llm_manager),
+                registry_adapter=self.registry_adapter,
+            )
+            if SelfHealingEngine
+            else None
         )
         self.file_tool = file_tool or self._auto_wire("tools.file_tool", "FileTool")
         self.project_reader = project_reader or self._auto_wire(
@@ -284,7 +307,80 @@ class BuilderEngine:
         # 5. Run tests
         if run_tests and test_code:
             try:
-                outcome = self.tester.run(module_name, module_dir / f"test_{module_name}.py")
+                outcome = self.tester.run(
+                    module_name,
+                    module_dir / f"test_{module_name}.py"
+                )
+
+                if not outcome.success and self.healer:
+                    self.logger.warning(
+                        "Tests failed for %s. Starting self healing.",
+                        module_name,
+                    )
+
+                    execution_result = ExecutionResult(
+                        task_id=module_name,
+                        success=outcome.success,
+                        output=getattr(outcome, "raw_result", None),
+                        error=str(
+                            getattr(
+                                getattr(outcome, "raw_result", None),
+                                "stdout",
+                                outcome,
+                            )
+                        ),
+                        metadata={
+                            "module": module_name,
+                            "validation_target": str(module_dir),
+                        },
+                    )
+
+                    recovery = self.healer.recover(
+                        failure=execution_result,
+                        source_path=module_dir / f"{module_name}.py",
+                        validation_target=module_dir,
+                        traceback_text=str(
+                            getattr(
+                                outcome,
+                                "raw_result",
+                                outcome,
+                            )
+                        ),
+                        metadata={
+                            "module": module_name,
+                            "test_file": str(
+                                module_dir / f"test_{module_name}.py"
+                            ),
+                        },
+                    )
+
+                    self.logger.info(
+                        "Self healing result: %s",
+                        recovery.message,
+                    )
+
+                    if recovery.success:
+                        self.logger.info(
+                            "Self healing completed. Retesting %s.",
+                            module_name,
+                        )
+
+                        outcome = self.tester.run(
+                            module_name,
+                            module_dir / f"test_{module_name}.py"
+                        )
+
+                        if outcome.success:
+                            self.logger.info(
+                                "Validation passed after self healing for %s.",
+                                module_name,
+                            )
+                        else:
+                            self.logger.warning(
+                                "Validation still failing after self healing for %s.",
+                                module_name,
+                            )
+
                 report.test_outcome = outcome
             except Exception as exc:  # noqa: BLE001 - never let testing crash the build
                 report.generation_errors.append(f"Test execution failed: {exc}")

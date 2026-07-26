@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from typing import Any
+from pathlib import Path
+
+
+class LLMPatchGenerator:
+    """
+    Adapter that exposes generate_patch()
+    for SelfHealingEngine using existing LLMManager.
+    """
+
+    def __init__(self, llm_manager: Any):
+        self.llm_manager = llm_manager
+
+    def generate_patch(self, payload: dict[str, Any]) -> dict[str, str]:
+        analysis = payload.get("analysis", {})
+
+        source_path = payload.get("source_path", "")
+
+        if source_path and not str(source_path).endswith(".py"):
+            module_name = str(source_path).rstrip("/").split("/")[-1]
+            source_path = str(
+                Path(source_path) / f"{module_name}.py"
+            )
+
+        prompt = f"""
+You are a Python repair agent.
+
+Repair this Python file:
+
+Target:
+{source_path}
+
+Error:
+{analysis}
+
+Requirements:
+- Modify ONLY the target file.
+- Return the complete corrected content of that file.
+- Do not generate __init__.py.
+- Do not generate test files.
+- Preserve existing class names, function names, and import names exactly.
+- Never rename classes.
+- Return only raw Python code.
+- No markdown fences.
+- No explanation.
+"""
+
+        response = self.llm_manager.generate(prompt)
+
+        content = (
+            response.content
+            if hasattr(response, "content")
+            else str(response)
+        )
+
+        # Remove markdown fences from LLM output
+        if "```python" in content:
+            content = content.replace("```python", "")
+
+        if "```" in content:
+            content = content.replace("```", "")
+
+        content = content.strip()
+
+        if not content.strip() or "{}" in content:
+            return {
+                "path": source_path,
+                "content": "",
+                "summary": "Empty repair generated",
+            }
+
+        return {
+            "path": source_path,
+            "content": content,
+            "summary": "Generated full-file repair patch",
+        }

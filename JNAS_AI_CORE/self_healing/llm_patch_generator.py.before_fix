@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from typing import Any
+
+
+class LLMPatchGenerator:
+    """
+    Adapter that exposes generate_patch()
+    for SelfHealingEngine using existing LLMManager.
+    """
+
+    def __init__(self, llm_manager: Any):
+        self.llm_manager = llm_manager
+
+    def generate_patch(self, payload: dict[str, Any]) -> dict[str, str]:
+        analysis = payload.get("analysis", {})
+
+        prompt = f"""
+You are a Python repair agent.
+
+Generate a minimal code patch.
+
+Error:
+{analysis}
+
+Requirements:
+- Return only Python code.
+- No markdown.
+- No explanation.
+"""
+
+        response = self.llm_manager.generate(prompt)
+
+        content = (
+            response.content
+            if hasattr(response, "content")
+            else str(response)
+        )
+
+        return {
+            "path": str(payload.get("source_path", "")),
+            "content": content,
+            "summary": "Generated patch using LLM repair adapter",
+        }

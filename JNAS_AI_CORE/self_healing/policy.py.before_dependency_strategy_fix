@@ -1,0 +1,37 @@
+"""Recovery strategy policy selection."""
+
+from __future__ import annotations
+
+from .analyzer import FailureAnalysis
+from .exceptions import RecoveryPolicyError
+
+
+class RecoveryPolicy:
+    """Select recovery actions from failure categories."""
+
+    RETRY = "Retry"
+    PATCH = "Patch"
+    SKIP = "Skip"
+    ROLLBACK = "Rollback"
+    ESCALATE = "Escalate"
+    ABORT = "Abort"
+
+    def __init__(self, overrides: dict[str, str] | None = None) -> None:
+        self._mapping = {
+            "Syntax Error": self.PATCH,
+            "Import Error": self.PATCH,
+            "Dependency Error": self.PATCH,
+            "Runtime Error": self.PATCH,
+            "Validation Error": self.PATCH,
+            "Configuration Error": self.ESCALATE,
+            "Filesystem Error": self.ROLLBACK,
+            "Unknown Error": self.ESCALATE,
+        }
+        self._mapping.update(overrides or {})
+
+    def select_strategy(self, analysis: FailureAnalysis) -> str:
+        """Select a recovery strategy for a failure analysis."""
+        strategy = self._mapping.get(analysis.category)
+        if not strategy:
+            raise RecoveryPolicyError(f"No recovery strategy for {analysis.category}.")
+        return strategy

@@ -50,10 +50,23 @@ class FailureAnalyzer:
         combined = f"{error}\n{traceback_text}".lower()
         if "syntaxerror" in combined or "indentationerror" in combined:
             return "Syntax Error"
-        if "importerror" in combined or "modulenotfounderror" in combined:
-            return "Import Error"
-        if "no module named" in combined or "dependency" in combined:
+        if "no module named" in combined:
             return "Dependency Error"
+
+        if "modulenotfounderror" in combined:
+            return "Dependency Error"
+
+        if "cannot import name" in combined:
+            return "Import Error"
+
+        if "importerror" in combined:
+            return "Import Error"
+
+        if "nameerror" in combined or "notimplementederror" in combined:
+            return "Runtime Error"
+
+        if "nameerror" in combined or "notimplementederror" in combined:
+            return "Runtime Error"
         if "validation" in combined or "valueerror" in combined:
             return "Validation Error"
         if "config" in combined or "setting" in combined:

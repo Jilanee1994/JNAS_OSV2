@@ -28,6 +28,7 @@ from .patcher import CodePatcher, RecoveryPatch
 from .policy import RecoveryPolicy
 from .recovery import RecoveryResult
 from .retry import RetryPolicy
+from .repair_engine import RepairEngine
 
 
 class SelfHealingEngine:
@@ -52,6 +53,9 @@ class SelfHealingEngine:
         self.registry_adapter = registry_adapter
         self.patch_generator = patch_generator
         self.history = history or RecoveryHistory()
+        self.repair_engine = RepairEngine(
+            patch_generator=self.patch_generator
+        )
         self.logger = get_self_healing_logger()
 
     def recover(
@@ -65,13 +69,31 @@ class SelfHealingEngine:
         """Recover from a failed execution result."""
         started = time.perf_counter()
         analysis = self.analyzer.analyze(failure, traceback_text, metadata)
+
+        self.logger.info(
+            "Healing analysis category=%s error=%s",
+            analysis.category,
+            analysis.original_error[:500],
+        )
+
         strategy = self.policy.select_strategy(analysis)
         self.logger.info("Recovery strategy selected: %s.", strategy)
 
         if strategy == RecoveryPolicy.RETRY:
             return self._retry_recovery(analysis, started)
         if strategy == RecoveryPolicy.PATCH:
-            return self._patch_recovery(analysis, started, source_path, validation_target)
+            return self._patch_recovery(
+                analysis,
+                started,
+                source_path,
+                validation_target,
+            )
+
+        if strategy == "dependency_fix":
+            return self._dependency_recovery(
+                analysis,
+                started,
+            )
         if strategy == RecoveryPolicy.ROLLBACK:
             return self._finish(False, "Rollback required.", analysis, strategy, started)
         if strategy == RecoveryPolicy.SKIP:
@@ -84,13 +106,43 @@ class SelfHealingEngine:
         self,
         analysis: FailureAnalysis,
         source_path: Path | None,
+        feedback: str = "",
     ) -> RecoveryPatch:
         """Generate a patch through ToolRegistry or an injected patch generator."""
-        payload = {"analysis": asdict(analysis), "source_path": str(source_path or "")}
+        payload = {
+            "analysis": asdict(analysis),
+            "source_path": str(source_path or ""),
+            "feedback": feedback,
+        }
         generated = self._generate_with_registry(analysis, payload)
         if generated is None and self.patch_generator is not None:
             generated = self.patch_generator.generate_patch(payload)
         return self._coerce_patch(generated, source_path)
+
+
+    def _generate_with_registry(
+        self,
+        analysis: FailureAnalysis,
+        payload: dict[str, Any],
+    ) -> Any:
+        """Generate repair patch through registry workers when available."""
+
+        if self.registry_adapter is None:
+            return None
+
+        worker = self.registry_adapter.resolve_worker(
+            "code_fix"
+        )
+
+        if worker is None:
+            return None
+
+        result = worker.execute(payload)
+
+        if isinstance(result, WorkerResult):
+            return result.result
+
+        return result
 
     def validate_recovery(self, validation_target: Path | None = None) -> tuple[bool, str]:
         """Run validation after patching."""
@@ -120,6 +172,61 @@ class SelfHealingEngine:
             )
         return self._finish(False, "Retry limit reached.", analysis, RecoveryPolicy.RETRY, started)
 
+    def _dependency_recovery(
+        self,
+        analysis: FailureAnalysis,
+        started: float,
+    ) -> RecoveryResult:
+        """Execute dependency repair worker."""
+
+        if self.registry_adapter is None:
+            return self._finish(
+                False,
+                "Dependency worker unavailable.",
+                analysis,
+                "dependency_fix",
+                started,
+            )
+
+        worker = self.registry_adapter.resolve_worker(
+            "dependency_fix"
+        )
+
+        if worker is None:
+            return self._finish(
+                False,
+                "DependencyFixWorker not registered.",
+                analysis,
+                "dependency_fix",
+                started,
+            )
+
+        result = worker.execute(
+            {
+                "analysis": analysis.original_error,
+                "traceback": analysis.traceback,
+                "category": analysis.category,
+                "task_id": analysis.task_id,
+            }
+        )
+
+        if isinstance(result, WorkerResult):
+            return self._finish(
+                result.success,
+                result.message,
+                analysis,
+                "dependency_fix",
+                started,
+            )
+
+        return self._finish(
+            False,
+            "Dependency worker returned invalid result.",
+            analysis,
+            "dependency_fix",
+            started,
+        )
+
     def _patch_recovery(
         self,
         analysis: FailureAnalysis,
@@ -127,59 +234,118 @@ class SelfHealingEngine:
         source_path: Path | None,
         validation_target: Path | None,
     ) -> RecoveryResult:
-        patch = self.generate_patch(analysis, source_path)
-        self.patcher.apply_patch(patch)
-        success, output = self.validate_recovery(validation_target or patch.path)
-        if not success:
-            self.patcher.rollback(patch.path)
-            return self._finish(
-                False,
-                "Patch failed validation and was rolled back.",
-                analysis,
-                RecoveryPolicy.PATCH,
-                started,
-                patch=patch,
-                validation_output=output,
-                errors=[output],
+
+        repair_target = source_path or validation_target or Path(".")
+
+        if repair_target.is_dir():
+            candidate = repair_target / f"{repair_target.name}.py"
+            if candidate.exists():
+                repair_target = candidate
+
+        feedback = ""
+
+        for retry_count in range(self.retry_policy.max_retries + 1):
+
+            self.repair_engine.repair(
+                failure_message=analysis.original_error + feedback,
+                target_path=repair_target,
             )
+
+            patch = self.generate_patch(
+                analysis,
+                repair_target,
+                feedback=feedback,
+            )
+
+            self.patcher.apply_patch(patch)
+
+            success, output = self.validate_recovery(repair_target)
+
+            if success:
+                return self._finish(
+                    True,
+                    "Patch recovery succeeded.",
+                    analysis,
+                    RecoveryPolicy.PATCH,
+                    started,
+                    retry_count=retry_count,
+                    patch=patch,
+                    validation_output=output,
+                )
+
+            self.patcher.rollback(patch.path)
+
+            feedback = (
+                "Previous repair attempt failed validation. "
+                "Fix the generated code. "
+                f"Validation output: {output}"
+            )
+
         return self._finish(
-            True,
-            "Patch recovery succeeded.",
+            False,
+            "Patch failed validation after retries and was rolled back.",
             analysis,
             RecoveryPolicy.PATCH,
             started,
             patch=patch,
-            validation_output=output,
+            validation_output=feedback,
+            errors=[feedback],
         )
 
-    def _generate_with_registry(self, analysis: FailureAnalysis, payload: dict[str, Any]) -> Any:
-        if self.registry_adapter is None:
-            return None
-        worker = self.registry_adapter.resolve_worker(self._task_for_category(analysis.category))
-        if worker is None:
-            return None
-        result = worker.execute(payload)
-        return result.result if isinstance(result, WorkerResult) else result
-
-    def _task_for_category(self, category: str) -> str:
-        if category in {"Syntax Error", "Import Error", "Validation Error", "Runtime Error"}:
-            return "code_fix"
-        if category == "Dependency Error":
-            return "dependency_fix"
-        return "recovery"
-
     def _coerce_patch(self, generated: Any, source_path: Path | None) -> RecoveryPatch:
+
+        def validate_content(content: str) -> str:
+            content = self._strip_fences(content)
+
+            # Reject common bad LLM repair patterns
+            if "class PdfAnalyzer(" in content:
+                raise HealingError(
+                    "Repair rejected: wrapper class detected."
+                )
+
+            if "from pdf_analyzer import Pdf_analyzer" in content:
+                raise HealingError(
+                    "Repair rejected: circular self import detected."
+                )
+
+            if "```python" in content or "```" in content:
+                raise HealingError(
+                    "Repair rejected: markdown fence remained."
+                )
+
+            return content
+
         if isinstance(generated, RecoveryPatch):
+            generated.content = validate_content(generated.content)
             return generated
+
         if isinstance(generated, dict):
             path = generated.get("path") or source_path
             content = generated.get("content")
-            summary = str(generated.get("summary", "Generated recovery patch."))
+            summary = str(
+                generated.get(
+                    "summary",
+                    "Generated recovery patch."
+                )
+            )
+
             if path and content:
-                return RecoveryPatch(Path(path), str(content), summary)
+                return RecoveryPatch(
+                    Path(path),
+                    validate_content(str(content)),
+                    summary,
+                )
+
         if isinstance(generated, str) and source_path is not None:
-            return RecoveryPatch(source_path, self._strip_fences(generated), "Generated full-file patch.")
-        raise HealingError("No usable recovery patch was generated.")
+            return RecoveryPatch(
+                source_path,
+                validate_content(generated),
+                "Generated full-file patch.",
+            )
+
+        raise HealingError(
+            "No usable recovery patch was generated."
+        )
 
     def _strip_fences(self, text: str) -> str:
         cleaned = text.strip()

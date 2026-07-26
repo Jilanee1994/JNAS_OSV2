@@ -37,12 +37,16 @@ def module_generation_prompt(module_name: str, context: str = "") -> str:
     Returns:
         A complete prompt string ready to send to ``LLMManager``.
     """
-    context_block = f"\nProject context:\n{context}\n" if context else ""
+    # Keep local LLM prompts small and focused
+    if context:
+        context = context[:6000]
+
+    context_block = f"\nRelevant project context:\n{context}\n" if context else ""
+
     return (
-        f"You are a senior Python 3.12 engineer working inside the "
-        f"JNAS_AI_CORE codebase.\n"
+        f"You are a Python 3.12 engineer working inside JNAS_AI_CORE.\n"
         f"{context_block}"
-        f"Generate the full production-ready source code for a new module "
+        f"Generate concise production-ready source code for a new module "
         f"named `{module_name}`.\n\n"
         f"Requirements:\n"
         f"- File will be saved as `{module_name}/{module_name}.py`.\n"
@@ -53,6 +57,8 @@ def module_generation_prompt(module_name: str, context: str = "") -> str:
         f"- Follow SOLID principles and keep the class single-purpose.\n"
         f"- Include sensible exception handling; never use bare `except`.\n"
         f"- Do NOT include markdown code fences, explanations, or prose.\n"
+        f"- Keep implementation concise and efficient.\n"
+        f"- Avoid unnecessary comments and examples.\n"
         f"- Output ONLY valid, runnable Python source code.\n"
     )
 
